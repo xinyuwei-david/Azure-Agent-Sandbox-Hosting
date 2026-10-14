@@ -49,6 +49,8 @@ A 的冷启动为 `create_total_s + first.guest_s`，恢复到回答为 `resume_
 
 [`tools/check_isolation.py`](tools/check_isolation.py)（C 和 D）读取 `kubectl get pods` 和 `kubectl get nodes`，要求 `runtimeClassName: kata-vm-isolation` 且 phase 为 Running；带 `--exec-uname` 时比较 pod 内的 `uname -r` 和所在节点的 `kernelVersion`。
 
+[`tools/measure_e2b.py`](tools/measure_e2b.py)（E）针对调用 E2B Firecracker 沙箱工具的 Foundry Prompt Agent，运行与 A 对齐的 3 次 `agent` 协议（`Sandbox.create("base")` → 首答 → 追问 → `beta_pause` → `Sandbox.connect` → 追问 → `kill`）以及与 D 对齐的 `perf` 协议（冷启动 n=5、带 `LANTERN-7` 的同会话追问、并发 4 和 8，以及沙箱替换）。
+
 workshop 的脚本（`module-01/setup.sh`、`module-03/prepare-agent-sandbox.sh`、`module-04/sandbox-deploy.sh`）按 `905f2c2` 原样使用，本仓库不复制它们。
 
 ## 实测记录
@@ -527,7 +529,7 @@ CI 在 Ubuntu 和 Windows 上用 Python 3.12 运行同样的检查（[工作流]
 
 **目录。**
 
-- [`tools/`](tools/)：`aca_sandbox.py`、`measure_aca.py`、`measure_responses.py`、`check_isolation.py`（在线）；`export_evidence.py`（仅作者可运行）、`build_measurements.py`、`render_docs.py`、`build_diagrams.py`、`validate_docs.py`（离线）。
+- [`tools/`](tools/)：`aca_sandbox.py`、`measure_aca.py`、`measure_responses.py`、`measure_e2b.py`、`check_isolation.py`（在线）；`export_evidence.py`（仅作者可运行）、`build_measurements.py`、`render_docs.py`、`build_diagrams.py`、`validate_docs.py`（离线）。
 - [`evidence/claims.json`](evidence/claims.json)：A–D 的 canonical 名称、状态、归属、隔离边界、选型合同、字母映射和实测顺序；[`evidence/runs/`](evidence/runs/)：脱敏后的实测记录，带私有源文件的 SHA-256，以及 `INDEX.json`；[`evidence/measurements.json`](evidence/measurements.json)：所有发布的指标。
 - [`images/`](images/)：架构图、它们的生成源 `tools/build_diagrams.py`、8 个 Azure 图标和 [`SOURCES.json`](images/SOURCES.json)。
 - [`config/.env.example`](config/.env.example)：全部配置项；[`tests/`](tests/)：离线测试和测试数据。

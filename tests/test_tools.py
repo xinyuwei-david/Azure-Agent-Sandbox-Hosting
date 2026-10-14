@@ -15,8 +15,8 @@ import measure_responses
 
 ROOT = Path(__file__).resolve().parents[1]
 FIX = ROOT / "tests" / "fixtures"
-TOOLS = ["aca_sandbox.py", "measure_aca.py", "measure_responses.py", "check_isolation.py", "build_measurements.py",
-         "render_docs.py", "build_diagrams.py", "export_evidence.py", "validate_docs.py"]
+TOOLS = ["aca_sandbox.py", "measure_aca.py", "measure_responses.py", "measure_e2b.py", "check_isolation.py",
+         "build_measurements.py", "render_docs.py", "build_diagrams.py", "export_evidence.py", "validate_docs.py"]
 
 
 @pytest.mark.parametrize("tool", TOOLS)

@@ -49,6 +49,8 @@ A's cold is `create_total_s + first.guest_s` and resume-to-answer is `resume_tot
 
 [`tools/check_isolation.py`](tools/check_isolation.py) (C and D) reads `kubectl get pods` and `kubectl get nodes`, requires `runtimeClassName: kata-vm-isolation` and phase Running, and with `--exec-uname` compares `uname -r` inside the pod with the node's `kernelVersion`.
 
+[`tools/measure_e2b.py`](tools/measure_e2b.py) (E) runs the A-matched 3-run `agent` protocol (`Sandbox.create("base")` → first answer → follow-up → `beta_pause` → `Sandbox.connect` → follow-ups → `kill`) and the D-matched `perf` protocol (cold n=5, warm follow-ups with `LANTERN-7`, concurrency 4 and 8, and sandbox replacement) against a Foundry Prompt Agent calling an E2B Firecracker sandbox tool.
+
 The workshop scripts (`module-01/setup.sh`, `module-03/prepare-agent-sandbox.sh`, `module-04/sandbox-deploy.sh`) are used unchanged at `905f2c2`; this repository does not copy them.
 
 ## Measured Runs
@@ -527,7 +529,7 @@ Not tested here: the tools against a fresh subscription end to end after this re
 
 **Assets.**
 
-- [`tools/`](tools/): `aca_sandbox.py`, `measure_aca.py`, `measure_responses.py`, `check_isolation.py` (live); `export_evidence.py` (author only), `build_measurements.py`, `render_docs.py`, `build_diagrams.py`, `validate_docs.py` (offline).
+- [`tools/`](tools/): `aca_sandbox.py`, `measure_aca.py`, `measure_responses.py`, `measure_e2b.py`, `check_isolation.py` (live); `export_evidence.py` (author only), `build_measurements.py`, `render_docs.py`, `build_diagrams.py`, `validate_docs.py` (offline).
 - [`evidence/claims.json`](evidence/claims.json): the canonical A–D identities, statuses, ownership, boundaries, selection contract, letter mapping and run order; [`evidence/runs/`](evidence/runs/): the redacted run records with the SHA-256 of their private sources, and `INDEX.json`; [`evidence/measurements.json`](evidence/measurements.json): every published metric.
 - [`images/`](images/): the architecture figures, their source of truth `tools/build_diagrams.py`, the 8 Azure icons and [`SOURCES.json`](images/SOURCES.json).
 - [`config/.env.example`](config/.env.example): every setting; [`tests/`](tests/): the offline tests and their fixtures.

@@ -105,8 +105,14 @@ def b_comparison(c: Ctx) -> str:
              f"port {rng(m['a.attr.port'])} s (n={m['a.attr.port']['n']})",
              f"{c.med('a.attr.image')}；加 VNet {rng(m['a.attr.vnet'])} s（n={m['a.attr.vnet']['n']}），"
              f"加端口 {rng(m['a.attr.port'])} s（n={m['a.attr.port']['n']}）"),
-         c.t("not visible (managed)", "不可见（平台托管）"),
-         c.t("not measured without PVC (suspend deletes the pod)", "未单独测无 PVC（挂起会删 pod）"),
+         c.t(f"auto-created on first `/responses` call (first byte {num(m['b.cold_gateway_ttfb']['value'])} s gateway, "
+             f"{num(m['b.cold_direct_ttfb']['value'])} s direct, n=1); or pre-create via `POST .../endpoint/sessions`",
+             f"首次 `/responses` 自动创建（首字节 {num(m['b.cold_gateway_ttfb']['value'])} s gateway、"
+             f"{num(m['b.cold_direct_ttfb']['value'])} s direct，n=1）；亦支持 `POST .../endpoint/sessions` 显式预建"),
+         c.t(f"image cached (with PVC): resume → Ready {num(m['c.resume_ready']['value'])} s (n=1), "
+             f"pod recreate → Ready {num(m['c.pod_lost']['value'])} s (n=1); fresh node + PVC {num(m['c.apply_ready']['value'])} s (n=1)",
+             f"镜像已缓存（含 PVC）：恢复 → Ready {num(m['c.resume_ready']['value'])} s（n=1），"
+             f"删 pod 重建 → Ready {num(m['c.pod_lost']['value'])} s（n=1）；新节点 + PVC {num(m['c.apply_ready']['value'])} s（n=1）"),
          c.t(f"{rng(m['d.pod_ready'])} s (n={m['d.pod_ready']['n']}) with the image cached; "
              f"{num(m['d.pod_ready_fresh']['min'])} s on a fresh node (n={m['d.pod_ready_fresh']['n']})",
              f"镜像已缓存 {rng(m['d.pod_ready'])} s（n={m['d.pod_ready']['n']}）；新节点 "
@@ -126,10 +132,12 @@ def b_comparison(c: Ctx) -> str:
         [c.t("**First answer after sandbox ready**", "**沙箱就绪后 → 第一个回答**"),
          c.t(f"{c.med('a.first_answer')}, timed inside the sandbox",
              f"{c.med('a.first_answer')}，沙箱内计时"),
-         c.t("included in new-session total below", "含在下方新会话总耗时中"),
+         c.t(f"{c.vals('b.warm_gateway')} (gateway) and {c.vals('b.warm_direct')} (direct) in an active sandbox",
+             f"已就绪沙箱内 {c.vals('b.warm_gateway')}（gateway）与 {c.vals('b.warm_direct')}（direct）"),
          c.t(f"{num(m['c.first']['value'])} s (n=1), at the LoadBalancer",
              f"{num(m['c.first']['value'])} s（n=1），在 LoadBalancer 处计时"),
-         c.t("included in new-session total below", "含在下方新会话总耗时中"),
+         c.t(f"{c.med('d.first_after_ready')} after pod Ready (agent turn {rng(m['d.agent_turn'])} s)",
+             f"pod Ready 后 {c.med('d.first_after_ready')}（agent 轮次 {rng(m['d.agent_turn'])} s）"),
          c.t(f"{c.med('e.first_answer')} (A protocol); {c.med('e.d_agent_turn')} (D protocol)",
              f"{c.med('e.first_answer')}（A 口径）；{c.med('e.d_agent_turn')}（D 口径）")],
         [c.t("**New session → first answer (no external volume)**", "**新会话 → 第一个回答（不挂外部卷，同口径）**"),
@@ -168,7 +176,8 @@ def b_comparison(c: Ctx) -> str:
              f"(n={m['a.attr.resume_small']['n']}, no volume), {c.med('a.resume')} (with Blob volume)",
              f"停止 {c.med('a.stop')}；恢复 → Running 不挂卷 {rng(m['a.attr.resume_small'])} s"
              f"（n={m['a.attr.resume_small']['n']}），带 Blob 卷 {c.med('a.resume')}"),
-         c.t("not exercised (the platform restores $HOME)", "未测（平台恢复 $HOME）"),
+         c.t("idle timeout (120–3600 s, default 900 s) or explicit `POST .../sessions/{id}:stop` releases compute and persists `$HOME` (no memory snapshot)",
+             "空闲超时（120–3600 s，默认 900 s）或显式调用 `POST .../sessions/{id}:stop` 释放算力并保留 `$HOME`（无内存快照）"),
          c.t(f"suspend → pod gone {num(m['c.suspend']['value'])} s (n=1); resume → Ready "
              f"{num(m['c.resume_ready']['value'])} s, LoadBalancer healthy {num(m['c.resume_lb']['value'])} s (n=1)",
              f"挂起 → pod 消失 {num(m['c.suspend']['value'])} s（n=1）；恢复 → Ready "
@@ -181,7 +190,8 @@ def b_comparison(c: Ctx) -> str:
         [c.t("**Resume request → first answer (stop excluded)**", "**发起恢复 → 第一个回答（不含停止）**"),
          c.t(c.med("a.recover") + f"; separately reported resume-only median {num(m['a.resume']['median'])} s",
              c.med("a.recover") + f"；恢复本身另行统计的中位数 {num(m['a.resume']['median'])} s"),
-         c.t("not exercised (the platform restores $HOME)", "未测（平台恢复 $HOME）"),
+         c.t("next call with same `agent_session_id` reprovisions compute and restores `$HOME` and `/files` ([session docs](https://learn.microsoft.com/azure/foundry/agents/how-to/manage-hosted-sessions#stop-a-session))",
+             "带同一 `agent_session_id` 的下次请求自动重配算力并恢复 `$HOME` 与 `/files`（[会话文档](https://learn.microsoft.com/azure/foundry/agents/how-to/manage-hosted-sessions#stop-a-session)）"),
          c.t(f"{num(m['c.resume_answer']['value'])} s (n=1; Ready {num(m['c.resume_ready']['value'])} s, "
              f"LoadBalancer healthy {num(m['c.resume_lb']['value'])} s)",
              f"{num(m['c.resume_answer']['value'])} s（n=1；Ready {num(m['c.resume_ready']['value'])} s，"
@@ -201,8 +211,10 @@ def b_comparison(c: Ctx) -> str:
         [c.t("**Idle policy (official docs)**", "**空闲策略（官方说明）**"),
          *(claims["paths"][letter][f"idle_policy_{c.lang}"] for letter in ("A", "B", "C", "D", "E"))],
         [c.t("**Capacity**", "**容量**"),
-         c.t("serverless; quota is concurrent cores (docs)", "无服务器；配额按并发核数计（文档）"),
-         c.t("managed, per session", "平台托管，按会话"),
+         c.t("serverless; default 500 concurrent active cores (2000 standard limit, 20000 in our subscription) and 3000 requests/min ([docs](https://sandboxes.azure.com/docs/sandboxes/limits)); Dynamic Sessions: 600 sessions/pool × 50 pools/region",
+             "无服务器；默认 500 并发活跃核（标准上限 2000，本订阅实查 20000）及 3000 请求/分钟（[文档](https://sandboxes.azure.com/docs/sandboxes/limits)）；动态会话：600 会话/池 × 50 池/区域"),
+         c.t("managed 1:1 per session ([docs](https://learn.microsoft.com/azure/foundry/agents/concepts/hosted-agents#scaling-and-right-sizing)); up to 20 GiB disk (20% system-reserved) and 50 MB file upload per session",
+             "平台按会话 1:1 动态创建（[文档](https://learn.microsoft.com/azure/foundry/agents/concepts/hosted-agents#scaling-and-right-sizing)）；单会话最高 20 GiB 磁盘（系统预留 20%）及 50 MB 文件上传"),
          c.t("your Kata node pool", "你的 Kata 节点池"),
          c.t(f"observed at most {m['d.capacity']['per_node']} per {m['d.capacity']['node_sku']} node; "
              f"{m['d.capacity']['max_sessions']} on {m['d.capacity']['n']} nodes; "

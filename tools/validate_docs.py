@@ -33,7 +33,7 @@ import render_docs as rd
 
 ROOT = Path(__file__).resolve().parents[1]
 
-README_HEADINGS = {"README.md": ["Purpose", "Steps", "Results"], "README_CN.md": ["目的", "操作步骤", "实现效果"]}
+README_HEADINGS = {"README.md": ["Purpose", "Results", "Steps"], "README_CN.md": ["目的", "实现效果", "操作步骤"]}
 VALIDATION_HEADINGS = {
     "VALIDATION.md": ["Architecture and Metrics", "What the Scripts Run", "Measured Runs", "Tests and Offline Checks",
                       "Limits, Assets and Sources"],
@@ -424,7 +424,7 @@ def check_commands(pages: dict[str, str]) -> list[str]:
                 errors.append(f"{name}: missing deployment or real invocation command {required}")
         if 'export HOSTING_REPO="$PWD"' not in commands:
             errors.append(f"{name}: missing stable repository return directory")
-        if re.search(r"tools/(?:measure_aca|measure_responses|check_isolation|build_measurements|render_docs|validate_docs)\.py", commands):
+        if re.search(r"tools/(?:measure_aca|measure_responses|measure_e2b|check_isolation|build_measurements|render_docs|validate_docs)\.py", commands):
             errors.append(f"{name}: measurement or evidence check used in deployment Steps")
         if "C invocation failed: non-empty response missing" not in commands:
             errors.append(f"{name}: C invocation does not reject a missing application answer")

@@ -439,6 +439,17 @@
       ],
       "value": 9.43
     },
+    "b.cold_gateway_ttfb": {
+      "run": "b-2026-09-27",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "new session until first response byte, gateway route",
+      "n": 1,
+      "unit": "s",
+      "values": [
+        7.66
+      ],
+      "value": 7.66
+    },
     "b.cold_direct": {
       "run": "b-2026-09-27",
       "label": "LOCAL_MEASUREMENT",
@@ -449,6 +460,17 @@
         5.29
       ],
       "value": 5.29
+    },
+    "b.cold_direct_ttfb": {
+      "run": "b-2026-09-27",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "new session until first response byte, direct route",
+      "n": 1,
+      "unit": "s",
+      "values": [
+        3.61
+      ],
+      "value": 3.61
     },
     "b.warm_gateway": {
       "run": "b-2026-09-27",
@@ -671,6 +693,21 @@
       ],
       "min": 25,
       "max": 25
+    },
+    "d.first_after_ready": {
+      "run": "d-2026-09-29-perf",
+      "label": "DERIVED",
+      "what": "paired cold wall time minus session pod create-to-Ready duration",
+      "n": 3,
+      "unit": "s",
+      "values": [
+        14.01,
+        15.49,
+        16.16
+      ],
+      "min": 14.01,
+      "max": 16.16,
+      "median": 15.49
     },
     "d.warm": {
       "run": "d-2026-09-29-perf",

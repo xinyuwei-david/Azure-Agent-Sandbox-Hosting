@@ -194,8 +194,14 @@ def build(runs: dict[str, dict], index: dict[str, str]) -> dict:
     put("b.deploy_v2", rid, "LOCAL_MEASUREMENT", single(b["deploy_v2_direct"]["seconds"]), "azd deploy, version 2")
     put("b.cold_gateway", rid, "LOCAL_MEASUREMENT", single(b["invoke_v1_gateway"]["new_session_seconds"]),
         "new session until the answer, gateway route")
+    put("b.cold_gateway_ttfb", rid, "LOCAL_MEASUREMENT",
+        single(b["invoke_v1_gateway"]["new_session_first_byte_seconds"]),
+        "new session until first response byte, gateway route")
     put("b.cold_direct", rid, "LOCAL_MEASUREMENT", single(b["invoke_v2_direct"]["new_session_seconds"]),
         "new session until the answer, direct route")
+    put("b.cold_direct_ttfb", rid, "LOCAL_MEASUREMENT",
+        single(b["invoke_v2_direct"]["new_session_first_byte_seconds"]),
+        "new session until first response byte, direct route")
     put("b.warm_gateway", rid, "LOCAL_MEASUREMENT", stat(b["invoke_v1_gateway"]["warm_seconds"]),
         "follow-up turns, gateway route")
     put("b.warm_direct", rid, "LOCAL_MEASUREMENT", stat(b["invoke_v2_direct"]["warm_seconds"]),
@@ -270,6 +276,9 @@ def build(runs: dict[str, dict], index: dict[str, str]) -> dict:
     put("d.pod_ready", rid, "LOCAL_MEASUREMENT", stat(ready), "session pod created until Ready, image cached")
     put("d.pod_ready_fresh", rid, "LOCAL_MEASUREMENT", stat(bench["pod_create_to_ready_fresh_node_s"]),
         "session pod created until Ready, fresh node")
+    put("d.first_after_ready", rid, "DERIVED",
+        stat([round(t["wall_s"] - t["pod"]["create_to_ready_s"], 2) for t in bench["cold_turns"]]),
+        "paired cold wall time minus session pod create-to-Ready duration")
     follow = bench["warm_turns"][1:]
     put("d.warm", rid, "LOCAL_MEASUREMENT", stat([t["wall_s"] for t in follow]), "follow-up turns, same session")
     if "LANTERN-7" not in (follow[0]["answer"] or ""):
