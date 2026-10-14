@@ -6,6 +6,7 @@
     "ac_workload": "agenthost workshop module-03 reflection agent at commit 905f2c2",
     "b_workload": "agenthost workshop module-02 Agent Framework agent with ResponsesHostServer at commit 905f2c2",
     "d_workload": "BYO-AKS private-preview sample agent",
+    "e_workload": "Foundry Prompt Agent calling an E2B Firecracker sandbox tool on an Azure VM",
     "common_behavior": "new stateful session, follow-up in the same session, and lifecycle or recovery where the path exposes it",
     "general_managed_start": "B",
     "long_running_per_user_start": "A"
@@ -13,7 +14,7 @@
   "measurement_scope": {
     "region": "East US 2",
     "first_date": "2026-09-22",
-    "last_date": "2026-10-09"
+    "last_date": "2026-10-14"
   },
   "run_order": [
     "a-2026-09-27-setup",
@@ -24,7 +25,9 @@
     "c-2026-09-27",
     "d-2026-09-29-placement",
     "d-2026-09-29-perf",
-    "d-2026-09-29-recovery"
+    "d-2026-09-29-recovery",
+    "e-2026-10-14-agent",
+    "e-2026-10-14-perf"
   ],
   "letter_mapping": {
     "A": {
@@ -45,6 +48,11 @@
     "D": {
       "name": "BYO-AKS",
       "upstream_module": "private-preview sample",
+      "upstream_solution_letter": null
+    },
+    "E": {
+      "name": "E2B on Azure VM",
+      "upstream_module": "e2b-dev/runtime @ 588e5b9",
       "upstream_solution_letter": null
     }
   },
@@ -128,6 +136,26 @@
       "boundary_zh": "每个会话一个 Kata pod VM",
       "node_owner_en": "You",
       "node_owner_zh": "你"
+    },
+    "E": {
+      "status_en": "E2B Embed open source (`588e5b9`) on Azure Gen2 VM",
+      "status_zh": "E2B Embed 开源版（`588e5b9`），运行在 Azure Gen2 VM 上",
+      "diagram_status_en": "E2B Embed OSS",
+      "diagram_status_zh": "E2B Embed 开源",
+      "lifecycle_owner_en": "You: E2B orchestrator on your VM, called as a Foundry agent tool",
+      "lifecycle_owner_zh": "你自己：你的 VM 上的 E2B 编排器，作为 Foundry agent 工具被调用",
+      "session_location_en": "Your Azure VM with nested virtualization (`/dev/kvm`)",
+      "session_location_zh": "你开启嵌套虚拟化（`/dev/kvm`）的 Azure VM",
+      "memory_suspend_en": "Yes: `beta_pause` saves Firecracker memory and disk (`vm_state` + `mem_file`)",
+      "memory_suspend_zh": "支持：`beta_pause` 保存 Firecracker 内存和磁盘快照（`vm_state` + `mem_file`）",
+      "selectable_compute_en": "Gen2 VM SKUs with nested virtualization, such as `Standard_D4ds_v7`; E2B `base` template defaults to 2 vCPU / 512 MB",
+      "selectable_compute_zh": "支持嵌套虚拟化的 Gen2 VM SKU，如 `Standard_D4ds_v7`；E2B `base` 模板默认 2 vCPU / 512 MB",
+      "idle_policy_en": "[E2B docs](https://e2b.dev/docs/sandbox): per-sandbox timeout (default 5 min) and explicit `beta_pause` / `connect`",
+      "idle_policy_zh": "[E2B 文档](https://e2b.dev/docs/sandbox)：按沙箱设置超时（默认 5 min），支持显式 `beta_pause` / `connect`",
+      "boundary_en": "One Firecracker micro-VM per sandbox",
+      "boundary_zh": "每个沙箱一个 Firecracker micro-VM",
+      "node_owner_en": "You",
+      "node_owner_zh": "你"
     }
   },
   "d_runtime_topology": {
@@ -152,6 +180,8 @@
     "hosted_agent_sizes": "https://learn.microsoft.com/azure/foundry/agents/concepts/hosted-agents#sandbox-sizes",
     "aks_pod_sandboxing_ga": "https://azure.microsoft.com/updates?id=526237",
     "aks_compute_isolation_scope": "https://learn.microsoft.com/azure/aks/concepts-pod-sandboxing",
-    "aks_stop_start": "https://learn.microsoft.com/azure/aks/start-stop-cluster"
+    "aks_stop_start": "https://learn.microsoft.com/azure/aks/start-stop-cluster",
+    "e2b_runtime_embed": "https://github.com/e2b-dev/runtime/tree/588e5b9500b0987bc5a700d91483b03f0ae7d2a2",
+    "e2b_docs": "https://e2b.dev/docs/sandbox"
   }
 }

@@ -150,6 +150,15 @@ def build(runs: dict[str, dict], index: dict[str, str]) -> dict:
     small = by_cfg["image"] + by_cfg["vnet"] + by_cfg["port"]
     put("a.attr.small", att["run_id"], "LOCAL_MEASUREMENT", stat(small),
         "image alone, image + VNet, image + port: every create time")
+    small_resume = [r["resume_total_s"] for r in att["runs"] if r["config"] in ("image", "vnet", "port")]
+    put("a.attr.resume_small", att["run_id"], "LOCAL_MEASUREMENT", stat(small_resume),
+        "image alone, image + VNet, image + port: every resume call until Running")
+    put("a.blob_mount_overhead", att["run_id"], "DERIVED",
+        single(round(m["a.create"]["median"] - m["a.attr.image"]["median"], 2)),
+        "median create with private Blob volume (24.25 s) minus median create with image only (2.31 s)")
+    put("a.cold_no_volume", att["run_id"], "DERIVED",
+        single(round(m["a.attr.image"]["median"] + m["a.first_answer"]["median"], 2)),
+        "median image-only create (2.31 s) + median first answer inside the sandbox (3.88 s)")
     survived = [r["process_survived"] for r in att["runs"]]
     put("a.attr.process_survived", att["run_id"], "LOCAL_MEASUREMENT",
         {"n": len(survived), "unit": "runs", "count": sum(bool(x) for x in survived)},
@@ -345,6 +354,119 @@ def build(runs: dict[str, dict], index: dict[str, str]) -> dict:
     put("d.cost_floor", fld["run_id"], "SOURCE_FACT",
         {"n": 1, "unit": "USD/h", "value": round(cost["system_pool"] + cost["kata_pool"] + cost["standard_tier"], 3)},
         cost["shape"] + ", " + cost["source"])
+
+    # E · E2B on Azure VM · 2026-10-14
+    ea = runs["e-e2b-2026-10-14/agent-runs.json"]
+    rid = ea["run_id"]
+    er = ea["runs"]
+    if len(er) != 3:
+        raise BuildError("E agent run should have 3 runs")
+    for r in er:
+        if "error" in r:
+            raise BuildError(f"E run {r['run']}: recorded an error")
+        if abs(r["create_total_s"] + r["first"]["guest_s"] - r["cold_total_s"]) > 0.011:
+            raise BuildError(f"E run {r['run']}: cold_total_s is not create + first answer")
+        if abs(r["resume_total_s"] + r["first_after_resume"]["guest_s"] - r["recover_total_s"]) > 0.011:
+            raise BuildError(f"E run {r['run']}: recover_total_s is not resume + answer")
+    put("e.create", rid, "LOCAL_MEASUREMENT", stat([r["create_total_s"] for r in er]),
+        "E2B Sandbox.create call until Running")
+    put("e.first_answer", rid, "LOCAL_MEASUREMENT", stat([r["first"]["guest_s"] for r in er]),
+        "first Prompt Agent answer calling E2B sandbox tool")
+    put("e.cold", rid, "LOCAL_MEASUREMENT", stat([r["cold_total_s"] for r in er]),
+        "E2B create wall time + first Prompt Agent answer")
+    put("e.warm", rid, "LOCAL_MEASUREMENT", stat([r["warm"]["guest_s"] for r in er]),
+        "follow-up Prompt Agent answer in the running E2B sandbox")
+    put("e.stop", rid, "LOCAL_MEASUREMENT", stat([r["stop_total_s"] for r in er]),
+        "beta_pause call until Paused (Firecracker memory + disk snapshot)")
+    put("e.resume", rid, "LOCAL_MEASUREMENT", stat([r["resume_total_s"] for r in er]),
+        "Sandbox.connect call until Running")
+    put("e.first_after_resume", rid, "LOCAL_MEASUREMENT",
+        stat([r["first_after_resume"]["guest_s"] for r in er]), "first Prompt Agent answer after resume")
+    put("e.recover", rid, "LOCAL_MEASUREMENT", stat([r["recover_total_s"] for r in er]),
+        "Sandbox.connect wall time + first answer after resume; excludes pause and idle waiting")
+    put("e.warm_after_resume", rid, "LOCAL_MEASUREMENT",
+        stat([r["warm_after_resume"]["guest_s"] for r in er]), "next answer after that")
+    evmm = sorted({r["vmm_type"] for r in er})
+    put("e.vmm", rid, "LOCAL_MEASUREMENT",
+        {"n": len(er), "unit": "runs", "value": evmm[0] if len(evmm) == 1 else evmm,
+         "count": sum(r["vmm_type"] == "firecracker" for r in er)}, "VMM running the E2B sandbox")
+    ekept = sum(r["first_after_resume"]["history_length"] > r["warm"]["history_length"] for r in er)
+    put("e.state_kept", rid, "LOCAL_MEASUREMENT", {"n": len(er), "unit": "runs", "count": ekept},
+        "conversation history length inside the E2B sandbox kept growing across pause and resume")
+    esetup = ea["setup"]
+    put("e.setup", rid, "LOCAL_MEASUREMENT",
+        {"n": 1, "unit": "s", "value": round(esetup["apt_and_docker_s"] + esetup["compose_and_template_s"], 1),
+         "parts": [esetup["apt_and_docker_s"], esetup["compose_and_template_s"]]},
+        "Docker Engine install + E2B Embed Compose up + base Firecracker template build")
+    eiso = ea["isolation_check"]
+    put("e.isolation", rid, "LOCAL_MEASUREMENT",
+        {"n": 1, "unit": "read-back", "vmm_type": eiso["vmm_type"],
+         "firecracker_version": eiso["firecracker_version"],
+         "guest_kernel": eiso["guest_kernel"], "host_kernel": eiso["host_kernel"]},
+        "uname -r inside the E2B Firecracker sandbox and on the Azure host VM")
+    ecost = ea["cost_floor_usd_per_hour"]
+    put("e.cost_floor", rid, "SOURCE_FACT",
+        {"n": 1, "unit": "USD/h",
+         "value": round(ecost["vm_d4ds_v7"] + ecost["public_ip"] + ecost["premium_ssd_p6"], 3)},
+        ecost["shape"] + ", " + ecost["source"])
+    mb = ea["on_host_microbench_20x"]
+    put("e.bench20.create", rid, "LOCAL_MEASUREMENT", stat(mb["create_only_s"]),
+        "on-host E2B Sandbox.create only, 20 sequential sandboxes")
+    put("e.bench20.warm_cmd", rid, "LOCAL_MEASUREMENT", stat(mb["warm_cmd_s"]),
+        "on-host warm command inside a running E2B sandbox, 20 runs")
+    put("e.bench20.pause", rid, "LOCAL_MEASUREMENT", stat(mb["pause_s"]),
+        "on-host beta_pause memory+disk snapshot, 20 runs")
+    put("e.bench20.resume", rid, "LOCAL_MEASUREMENT", stat(mb["resume_connect_s"]),
+        "on-host Sandbox.connect resume, 20 runs")
+
+    ep = runs["e-e2b-2026-10-14/perf.json"]
+    erid = ep["run_id"]
+    for t in ep["cold_turns"] + ep["warm_turns"]:
+        if t["http"] != 200:
+            raise BuildError(f"E perf turn {t['started_utc']} was not answered")
+    for t in ep["cold_turns"]:
+        if t["runtime"] != "firecracker":
+            raise BuildError("E cold sandbox without firecracker runtime")
+        if t["sandbox_create_to_ready_s"] > t["wall_s"] + 0.1:
+            raise BuildError("E cold sandbox create-to-Ready exceeds the paired request wall time")
+    put("e.d_cold", erid, "LOCAL_MEASUREMENT", stat([t["wall_s"] for t in ep["cold_turns"]]),
+        "new session until the answer, D-matched 5-run cold protocol")
+    put("e.d_sandbox_ready", erid, "LOCAL_MEASUREMENT",
+        stat([t["sandbox_create_to_ready_s"] for t in ep["cold_turns"]]),
+        "E2B sandbox created until Ready during the 5 cold turns")
+    put("e.d_agent_turn", erid, "LOCAL_MEASUREMENT",
+        stat([t["agent_turn_s"] for t in ep["cold_turns"]]),
+        "Prompt Agent turn duration after sandbox Ready during the 5 cold turns")
+    efollow = ep["warm_turns"][1:]
+    if "LANTERN-7" not in (efollow[0]["answer"] or ""):
+        raise BuildError("E warm session did not remember LANTERN-7")
+    put("e.d_warm", erid, "LOCAL_MEASUREMENT", stat([t["wall_s"] for t in efollow]),
+        "follow-up turns in the same session, D-matched warm protocol")
+    elevels = {lv["concurrency"]: lv for lv in ep["scalability"]}
+    for n in (4, 8):
+        lv = elevels[n]
+        t1 = [s["turn1"] for s in lv["sessions"]]
+        if len(t1) != n:
+            raise BuildError(f"E concurrency {n}: expected {n} session records, got {len(t1)}")
+        ok = [t["wall_s"] for t in t1 if t["http"] == 200]
+        refused = [t for t in t1 if t["http"] != 200]
+        put(f"e.c{n}", erid, "LOCAL_MEASUREMENT",
+            {"n": n, "unit": "sessions", "answered": len(ok), "answered_s": ok, "refused": len(refused),
+             "max_live_vms": lv["max_live_firecracker_processes"]},
+            f"{n} new sessions at once on 1 {ep['node_sku']} VM")
+    put("e.capacity", erid, "LOCAL_MEASUREMENT",
+        {"n": ep["host_nodes"], "unit": "sessions",
+         "max_sessions": ep["max_concurrent_sandboxes_observed"], "node_sku": ep["node_sku"]},
+        "concurrent live Firecracker micro-VMs observed on one host VM with 0 refusals")
+    erec = ep["recovery"]
+    if not erec["followup_on_live_session"]["state_preserved"] or erec["followup_on_live_session"]["answer"] != "LANTERN-7":
+        raise BuildError("the live session used after E sandbox kill did not keep LANTERN-7")
+    put("e.pod_lost", erid, "LOCAL_MEASUREMENT", single(erec["replacement_ready_s"]),
+        "sandbox killed until a replacement E2B sandbox is Ready")
+    put("e.other_session_followup", erid, "LOCAL_MEASUREMENT",
+        single(erec["followup_on_live_session"]["wall_s"]),
+        "follow-up on a different live session after the sandbox kill; that session kept LANTERN-7")
+
     return {"schema": 1, "built_from": dict(sorted(index.items())), "metrics": m}
 
 

@@ -12,6 +12,7 @@ The narrative is organized around two questions: who runs the session lifecycle,
 - **B · Foundry hosted agent.** `azd ai agent init` binds the workshop's `azure.yaml` to the existing project and `azd deploy` builds and publishes a version. Learn describes per-session VM-isolated sandboxes, `$HOME` and `/files` persisted across idle, an idle timeout of 2–60 minutes (default 15) and deletion after 30 days of inactivity.
 - **C · AKS + agent-sandbox.** AKS with Workload Identity and the Blob CSI driver, an Azure Linux node pool with `KataVmIsolation` (`Standard_D4s_v3` in our run), agent-sandbox `v0.5.2` (`agents.x-k8s.io/v1beta1`, kind `Sandbox`), a Blob PVC for state and a LoadBalancer restricted to one source address. Suspend and resume are `spec.operatingMode: Suspended | Running`; the pod is deleted and file state is restored from Blob, not from a memory snapshot. Learn names the stack: Azure Linux host, Microsoft Hyper-V, Cloud Hypervisor VMM, Kata Containers.
 - **D · BYO-AKS.** The initial one-Kata-node read-back had 13 runtime pods in `foundry-system`: 9 fixed Deployment replicas (router ×3 behind a LoadBalancer on `:443`, controller ×2, identity proxy ×2, telemetry controller ×2) plus 4 DaemonSets. Each DaemonSet adds one pod per matching Kata node, so the total grows with the node pool. Each session is its own Deployment, ReplicaSet and pod with `runtimeClassName: kata-vm-isolation` in a per-project namespace.
+- **E · E2B on Azure VM.** An Ubuntu 24.04 LTS Gen2 VM (`Standard_D4ds_v7` with nested virtualization `/dev/kvm`) runs the open-source E2B Embed Docker Compose stack (`e2b-dev/runtime` at `588e5b9`). Each `Sandbox.create("base")` boots a Firecracker `v1.14-0.2.0` micro-VM (2 vCPU, 512 MB, guest kernel `6.1.177+`); `beta_pause` snapshots memory and disk (`vm_state` + `mem_file`) to the local SSD and `Sandbox.connect` restores it. A Foundry Prompt Agent (`gpt-5.4-mini`) calls the sandbox via a function tool over ports `3000` and `3002`.
 
 Why these clocks:
 
@@ -343,6 +344,95 @@ When the refusals began, 12 session pods were alive on 3 `Standard_D4s_v5` nodes
 
 **Boundary.** One deletion. The follow-up went to a different live session than the deleted one. It shows that the pool kept serving and that other session retained `LANTERN-7`; it does **not** establish continuity of the deleted session.
 
+### e-2026-10-14-agent: Foundry Prompt Agent + E2B Firecracker sandbox on Azure VM, 3 runs
+
+**Question.** When E2B Embed runs on an Azure Gen2 VM with `/dev/kvm`, how fast are Firecracker sandbox creation, pause and resume, and how fast does a Foundry Prompt Agent answer across pause and resume under the same 3-run protocol as A?
+
+**Input.** Each run created a new E2B `base` sandbox and a new Foundry conversation (`gpt-5.4-mini` in East US 2) and asked, in order, these exact questions ([`evidence/runs/e-e2b-2026-10-14/agent-runs.json`](evidence/runs/e-e2b-2026-10-14/agent-runs.json)):
+
+<!-- BEGIN GENERATED: e-agent-input -->
+> Host VM: Standard_D4ds_v7; E2B `base` template (2 vCPU, 512 MB, Firecracker memory + disk snapshot via `beta_pause`).
+> Request: POST <Foundry project>/openai/v1/responses with Prompt Agent calling function tool run_in_e2b_sandbox on E2B API :3000/:3002.
+> First answer: "Where is Bangkok? Answer in one short sentence."
+> Every later turn: "How many questions have I asked before this one? Number only."
+<!-- END GENERATED: e-agent-input -->
+
+**Varied and fixed.** Only the run number varied across the 3 agent runs; the 20-run microbenchmark ran on the host VM against `localhost:3000` and `localhost:3002`.
+
+**Result.**
+
+<!-- BEGIN GENERATED: e-agent -->
+| Run | Create → Running | First answer | Cold | Follow-up | Pause | Resume | Answer after resume | Resume → answer | Answers |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---|
+| 1 | 0.14 | 4.12 | 4.26 | 2.95 | 0.13 | 0.08 | 6.4 | 6.48 | Bangkok is the capital of Thailand in Southeast Asia. / 2 / 3 / 4 |
+| 2 | 0.07 | 2.82 | 2.89 | 2.83 | 0.11 | 0.11 | 12.71 | 12.82 | Bangkok is the capital of Thailand in Southeast Asia. / 1 / 2 / 3 |
+| 3 | 0.06 | 8.38 | 8.44 | 3.92 | 0.15 | 0.09 | 4.64 | 4.73 | Bangkok is the capital city of Thailand. / 1 / 2 / 3 |
+| **median** | **0.07** | **4.12** | **4.26** | **2.95** | **0.13** | **0.09** | **6.4** | **6.48** |  |
+
+On-host 20-sandbox microbenchmark (zero WAN RTT): create 0.051–0.089 s (n=20), warm command 0.007–0.01 s (n=20), pause 0.051–1.81 s (n=20), resume 0.086–0.62 s (n=20). Read inside the sandbox: VMM `firecracker` `v1.14-0.2.0`, guest kernel `6.1.177+`, host kernel `6.17.0-1022-azure`.
+<!-- END GENERATED: e-agent -->
+
+All 3 agent runs reported `vmm_type` <!--v:e.vmm.value-->firecracker<!--/v-->, and the conversation history inside the sandbox grew across pause and resume in <!--v:e.state_kept.count-->3<!--/v--> of 3. Initial VM setup took <!--v:e.setup.value-->177<!--/v--> s.
+
+**Boundary.**
+- Three agent runs plus 20 on-host microbenchmark iterations on one `Standard_D4ds_v7` VM in East US 2.
+- The Prompt Agent runs in Foundry and calls the E2B sandbox as a function tool over the network, whereas A's reflection agent ran inside the ACA sandbox itself.
+
+### e-2026-10-14-perf: cold start, follow-ups, concurrency and sandbox replacement on E2B
+
+**Question.** Under D's benchmark protocol (`COLD-{i}`, `LANTERN-7` warm follow-ups, 4 and 8 concurrent sessions, and sandbox replacement), how does a single `Standard_D4ds_v7` VM running E2B perform?
+
+**Input.** The D-matched benchmark driver with these exact inputs ([`evidence/runs/e-e2b-2026-10-14/perf.json`](evidence/runs/e-e2b-2026-10-14/perf.json)):
+
+<!-- BEGIN GENERATED: e-perf-input -->
+> Request: POST <Foundry project>/openai/v1/responses {"input": <input>} with Prompt Agent calling E2B sandbox tool.
+> New sessions: "Reply with exactly COLD-{i}" (n = 1, 2, 3, 4, 5)
+> One session: "Remember the code word LANTERN-7. Reply only OK.", then "What is the code word? Reply with the word only.", then "Reply with exactly WARM-{i}" (n = 1, 2)
+> At once, per session: "Remember SCALE-{i}. Reply only OK.", then "What did I ask you to remember? Word only."
+<!-- END GENERATED: e-perf-input -->
+
+**Varied and fixed.** Cold runs repeated 5 new sessions; concurrency varied 4 and 8 sessions at once on 1 `Standard_D4ds_v7` VM.
+
+**Result.** New sessions:
+
+<!-- BEGIN GENERATED: e-cold -->
+| Start (UTC) | Answer | Sandbox created → Ready, s | Agent turn, s | New session → answer, s |
+|---|---|---:|---:|---:|
+| 06:14:58 | COLD-1 | 0.056 | 7.75 | 7.94 |
+| 06:15:06 | COLD-2 | 0.068 | 2.28 | 2.54 |
+| 06:15:08 | COLD-3 | 0.068 | 3.44 | 3.6 |
+| 06:15:12 | COLD-4 | 0.057 | 3.52 | 3.65 |
+| 06:15:16 | COLD-5 | 0.066 | 3.19 | 3.34 |
+
+Across the 5 cold runs: sandbox create → Ready 0.066 s median (0.056–0.068; n=5), Prompt Agent turn 3.44 s median (2.28–7.75; n=5), end-to-end new session → answer 3.6 s median (2.54–7.94; n=5).
+<!-- END GENERATED: e-cold -->
+
+Follow-ups in one session:
+
+<!-- BEGIN GENERATED: e-warm -->
+| Turn | Answer | Sandbox tool, s | Client wall, s |
+|---|---|---:|---:|
+| 1 (new session) | OK | 0.14 | 2.76 |
+| 2 | LANTERN-7 | 0.033 | 5.03 |
+| 3 | WARM-1 | 0.029 | 3.19 |
+| 4 | WARM-2 | 0.028 | 3.39 |
+<!-- END GENERATED: e-warm -->
+
+At once and sandbox replacement:
+
+<!-- BEGIN GENERATED: e-scale -->
+| At once | Answered | Refused | Live Firecracker VMs | Turn 1 wall, s |
+|---:|---|---|---:|---|
+| 4 | 4/4 | 0/4 | 7 | 3.9, 3.12, 3.9, 3.17 |
+| 8 | 8/8 | 0/8 | 9 | 4.59, 2.48, 4.63, 6.94, 5.4, 3.7, 7.34, 3.82 |
+
+Sandbox replacement after `kill`: new Firecracker sandbox Ready in 0.1 s; follow-up on a live session HTTP 200, 2.61 s, "LANTERN-7", state preserved: true.
+<!-- END GENERATED: e-scale -->
+
+**Boundary.**
+- Single-VM deployment (`Standard_D4ds_v7`, 4 vCPU / 16 GiB RAM). At concurrency 8, one follow-up turn (`SCALE-8`) waited 78.99 s on model/tool serialization while all 8/8 sessions succeeded and remembered their code words.
+- Like D's recovery run, the follow-up after `kill` went to a different live session (`LANTERN-7`), proving the host kept serving and replacement sandboxes start in <!--v:e.pod_lost.value-->0.1<!--/v--> s.
+
 ### Numbers you can recompute
 
 Every published metric above comes from [`evidence/measurements.json`](evidence/measurements.json), which [`tools/build_measurements.py`](tools/build_measurements.py) recomputes from `evidence/runs/` after checking each file's SHA-256 against [`evidence/runs/INDEX.json`](evidence/runs/INDEX.json). It also checks: A's cold equals create plus first answer and recover equals resume plus answer in every run; each D cold pod's create-to-Ready equals its Kubernetes timestamps and runs `kata-vm-isolation`; D's warm session and the different live session used after pod deletion both remembered `LANTERN-7`. Medians are reported only for odd samples; even samples show their values.
@@ -405,7 +495,7 @@ On Windows, activate with `.venv\Scripts\activate` instead of `. .venv/bin/activ
 - **`pytest`** runs these checks as tests, recomputes the medians from raw values, evaluates `check_isolation.py` on saved pod and node JSON, runs every tool's `--help` without the Azure SDK, and breaks each guard (a tampered run file, invalid duration, reversed timeline, incomplete concurrency sample, edited number, inserted subscription ID, removed heading, table before an input, reordered runs) to confirm it fails.
 - Mocked live-tool tests also check that failed concurrency follow-ups, skipped recovery, failed pod reads or deletions, lost history, invalid arguments and missing settings cannot report success. They make no Azure calls.
 
-CI runs the same on Ubuntu and Windows with Python 3.12 ([workflow](https://github.com/david-xinyuwei/david-share/blob/master/.github/workflows/agent-sandbox-hosting-ci.yml)).
+CI runs the same on Ubuntu and Windows with Python 3.12 ([workflow](https://github.com/xinyuwei-david/Azure-Agent-Sandbox-Hosting/blob/main/.github/workflows/docs-ci.yml)).
 
 The live checks need Azure and the resources from the README: `tools/aca_sandbox.py`, `tools/measure_aca.py`, `tools/measure_responses.py` and `tools/check_isolation.py` without `--pods-json`.
 
@@ -432,7 +522,7 @@ Not tested here: the tools against a fresh subscription end to end after this re
 - `SOURCE_FACT`: the [fixed module-02 implementation](https://github.com/oxcp/ainotes/blob/905f2c2/agenthost/module-02/agent-src/main.py) makes `MODEL_ROUTING=direct` call the Foundry project endpoint. A project with a registered native AI Gateway may still forward those calls through APIM; the mode name alone does not prove a gateway bypass.
 - `SOURCE_FACT`: status sources: A [GA on 2026-09-23](https://techcommunity.microsoft.com/blog/appsonazureblog/azure-container-apps-sandboxes-now-generally-available/4559125); B [GA in 2026-06](https://azure.microsoft.com/updates?id=563596) (Azure Update "Generally Available: Hosted agents in Foundry Agent Service"; the earlier [Build post of 2026-06-02](https://devblogs.microsoft.com/foundry/hosted-agents-build26/) described the public preview before GA); C [Pod Sandboxing GA on 2025-11-18](https://azure.microsoft.com/updates?id=526237), with agent-sandbox v0.5.2 as an open-source project.
 - `LOCAL_MEASUREMENT`: A's history length continued increasing in the saved run. This checks history continuity, not exact answer correctness or preservation of arbitrary process memory.
-- `SOURCE_FACT`: D's cost floor of <!--v:d.cost_floor.value-->0.484<!--/v--> USD/h is two `Standard_D4s_v5` nodes at 0.192 USD/h each plus the AKS Standard tier at 0.10 USD/h, East US 2 retail prices queried 2026-09-21; no discounts or tax. This is not the cost of the three-Kata-node benchmark pool.
+- `SOURCE_FACT`: D's cost floor of <!--v:d.cost_floor.value-->0.484<!--/v--> USD/h is two `Standard_D4s_v5` nodes at 0.192 USD/h each plus the AKS Standard tier at 0.10 USD/h, East US 2 retail prices queried 2026-09-21; E's single-VM cost floor of <!--v:e.cost_floor.value-->0.344<!--/v--> USD/h is one `Standard_D4ds_v7` Linux VM at 0.326 USD/h, one Standard static public IP at 0.005 USD/h and one 50 GB Premium SSD P6 disk at 0.013 USD/h, East US 2 retail prices queried 2026-10-14; no discounts or tax. This is not the cost of the three-Kata-node benchmark pool.
 - D's onboarding durations (role assignments about <!--v:d.role_assignments.value-->120<!--/v--> s, `azd provision` <!--v:d.azd_provision.value-->522<!--/v--> s, `azd deploy` <!--v:d.azd_deploy.value-->212<!--/v--> s) come from the author's console recorded in the earlier field record; the console itself was not kept.
 
 **Assets.**

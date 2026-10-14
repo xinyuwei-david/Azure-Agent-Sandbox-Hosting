@@ -14,7 +14,9 @@
     "d-byoaks-2026-09-29/cold-early.json": "7b2060090147ecd6543a04f410e6fcdefd2a2f79d19cb329d7e048578c2ca525",
     "d-byoaks-2026-09-29/model-direct.json": "f55403b68aca3ec7fc6382287ec071b06813d4bdc284d7f927e0f47e60488b18",
     "d-byoaks-2026-09-29/placement.json": "a19f92faf818acb0c3bf1e7f757dcdae7c0d36364cf310f6f5ebc96363d863d2",
-    "d-byoaks-2026-09-29/recovery.json": "f3f21116914bc42268e8cfaee4c28097c75dfe389729669b406e37eef11e2fdb"
+    "d-byoaks-2026-09-29/recovery.json": "f3f21116914bc42268e8cfaee4c28097c75dfe389729669b406e37eef11e2fdb",
+    "e-e2b-2026-10-14/agent-runs.json": "a3324fe00ddc479f581dfe465fcec490105e8d1188c8c655181e5afb651746f7",
+    "e-e2b-2026-10-14/perf.json": "f1d04192795164ba4d42b2179280af9e5e22b4f71d8ca374183503587f5853f7"
   },
   "metrics": {
     "a.create": {
@@ -271,6 +273,47 @@
       "min": 1.6,
       "max": 2.7,
       "median": 2.31
+    },
+    "a.attr.resume_small": {
+      "run": "a-2026-10-09-attribution",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "image alone, image + VNet, image + port: every resume call until Running",
+      "n": 7,
+      "unit": "s",
+      "values": [
+        2.02,
+        2.78,
+        2.6,
+        1.58,
+        1.8,
+        1.61,
+        2.79
+      ],
+      "min": 1.58,
+      "max": 2.79,
+      "median": 2.02
+    },
+    "a.blob_mount_overhead": {
+      "run": "a-2026-10-09-attribution",
+      "label": "DERIVED",
+      "what": "median create with private Blob volume (24.25 s) minus median create with image only (2.31 s)",
+      "n": 1,
+      "unit": "s",
+      "values": [
+        21.94
+      ],
+      "value": 21.94
+    },
+    "a.cold_no_volume": {
+      "run": "a-2026-10-09-attribution",
+      "label": "DERIVED",
+      "what": "median image-only create (2.31 s) + median first answer inside the sandbox (3.88 s)",
+      "n": 1,
+      "unit": "s",
+      "values": [
+        6.19
+      ],
+      "value": 6.19
     },
     "a.attr.process_survived": {
       "run": "a-2026-10-09-attribution",
@@ -862,6 +905,446 @@
       "n": 1,
       "unit": "USD/h",
       "value": 0.484
+    },
+    "e.create": {
+      "run": "e-2026-10-14-agent",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "E2B Sandbox.create call until Running",
+      "n": 3,
+      "unit": "s",
+      "values": [
+        0.14,
+        0.07,
+        0.06
+      ],
+      "min": 0.06,
+      "max": 0.14,
+      "median": 0.07
+    },
+    "e.first_answer": {
+      "run": "e-2026-10-14-agent",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "first Prompt Agent answer calling E2B sandbox tool",
+      "n": 3,
+      "unit": "s",
+      "values": [
+        4.12,
+        2.82,
+        8.38
+      ],
+      "min": 2.82,
+      "max": 8.38,
+      "median": 4.12
+    },
+    "e.cold": {
+      "run": "e-2026-10-14-agent",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "E2B create wall time + first Prompt Agent answer",
+      "n": 3,
+      "unit": "s",
+      "values": [
+        4.26,
+        2.89,
+        8.44
+      ],
+      "min": 2.89,
+      "max": 8.44,
+      "median": 4.26
+    },
+    "e.warm": {
+      "run": "e-2026-10-14-agent",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "follow-up Prompt Agent answer in the running E2B sandbox",
+      "n": 3,
+      "unit": "s",
+      "values": [
+        2.95,
+        2.83,
+        3.92
+      ],
+      "min": 2.83,
+      "max": 3.92,
+      "median": 2.95
+    },
+    "e.stop": {
+      "run": "e-2026-10-14-agent",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "beta_pause call until Paused (Firecracker memory + disk snapshot)",
+      "n": 3,
+      "unit": "s",
+      "values": [
+        0.13,
+        0.11,
+        0.15
+      ],
+      "min": 0.11,
+      "max": 0.15,
+      "median": 0.13
+    },
+    "e.resume": {
+      "run": "e-2026-10-14-agent",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "Sandbox.connect call until Running",
+      "n": 3,
+      "unit": "s",
+      "values": [
+        0.08,
+        0.11,
+        0.09
+      ],
+      "min": 0.08,
+      "max": 0.11,
+      "median": 0.09
+    },
+    "e.first_after_resume": {
+      "run": "e-2026-10-14-agent",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "first Prompt Agent answer after resume",
+      "n": 3,
+      "unit": "s",
+      "values": [
+        6.4,
+        12.71,
+        4.64
+      ],
+      "min": 4.64,
+      "max": 12.71,
+      "median": 6.4
+    },
+    "e.recover": {
+      "run": "e-2026-10-14-agent",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "Sandbox.connect wall time + first answer after resume; excludes pause and idle waiting",
+      "n": 3,
+      "unit": "s",
+      "values": [
+        6.48,
+        12.82,
+        4.73
+      ],
+      "min": 4.73,
+      "max": 12.82,
+      "median": 6.48
+    },
+    "e.warm_after_resume": {
+      "run": "e-2026-10-14-agent",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "next answer after that",
+      "n": 3,
+      "unit": "s",
+      "values": [
+        5.57,
+        3.37,
+        5.18
+      ],
+      "min": 3.37,
+      "max": 5.57,
+      "median": 5.18
+    },
+    "e.vmm": {
+      "run": "e-2026-10-14-agent",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "VMM running the E2B sandbox",
+      "n": 3,
+      "unit": "runs",
+      "value": "firecracker",
+      "count": 3
+    },
+    "e.state_kept": {
+      "run": "e-2026-10-14-agent",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "conversation history length inside the E2B sandbox kept growing across pause and resume",
+      "n": 3,
+      "unit": "runs",
+      "count": 3
+    },
+    "e.setup": {
+      "run": "e-2026-10-14-agent",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "Docker Engine install + E2B Embed Compose up + base Firecracker template build",
+      "n": 1,
+      "unit": "s",
+      "value": 177.0,
+      "parts": [
+        33.0,
+        144.0
+      ]
+    },
+    "e.isolation": {
+      "run": "e-2026-10-14-agent",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "uname -r inside the E2B Firecracker sandbox and on the Azure host VM",
+      "n": 1,
+      "unit": "read-back",
+      "vmm_type": "firecracker",
+      "firecracker_version": "v1.14-0.2.0",
+      "guest_kernel": "6.1.177+",
+      "host_kernel": "6.17.0-1022-azure"
+    },
+    "e.cost_floor": {
+      "run": "e-2026-10-14-agent",
+      "label": "SOURCE_FACT",
+      "what": "1 x Standard_D4ds_v7 Linux + 1 Standard Static Public IP + 50 GB Premium SSD P6 in East US 2, Azure Retail Prices API, queried 2026-10-14, pay-as-you-go, before discounts and tax",
+      "n": 1,
+      "unit": "USD/h",
+      "value": 0.344
+    },
+    "e.bench20.create": {
+      "run": "e-2026-10-14-agent",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "on-host E2B Sandbox.create only, 20 sequential sandboxes",
+      "n": 20,
+      "unit": "s",
+      "values": [
+        0.0638,
+        0.0616,
+        0.062,
+        0.059,
+        0.0784,
+        0.0712,
+        0.0669,
+        0.0587,
+        0.0566,
+        0.0888,
+        0.0599,
+        0.0507,
+        0.0555,
+        0.0684,
+        0.0763,
+        0.0571,
+        0.0721,
+        0.0595,
+        0.0597,
+        0.057
+      ],
+      "min": 0.0507,
+      "max": 0.0888
+    },
+    "e.bench20.warm_cmd": {
+      "run": "e-2026-10-14-agent",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "on-host warm command inside a running E2B sandbox, 20 runs",
+      "n": 20,
+      "unit": "s",
+      "values": [
+        0.008,
+        0.0082,
+        0.0073,
+        0.0083,
+        0.0071,
+        0.0081,
+        0.0101,
+        0.0077,
+        0.0079,
+        0.0087,
+        0.0082,
+        0.0091,
+        0.0084,
+        0.0074,
+        0.0091,
+        0.008,
+        0.009,
+        0.0096,
+        0.0085,
+        0.0084
+      ],
+      "min": 0.0071,
+      "max": 0.0101
+    },
+    "e.bench20.pause": {
+      "run": "e-2026-10-14-agent",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "on-host beta_pause memory+disk snapshot, 20 runs",
+      "n": 20,
+      "unit": "s",
+      "values": [
+        0.0826,
+        0.1239,
+        0.0645,
+        0.051,
+        0.7076,
+        0.6304,
+        0.4288,
+        1.2205,
+        0.7329,
+        0.7311,
+        1.0236,
+        1.589,
+        0.3391,
+        0.8064,
+        0.9593,
+        0.8807,
+        0.6747,
+        0.9785,
+        1.8112,
+        0.4686
+      ],
+      "min": 0.051,
+      "max": 1.8112
+    },
+    "e.bench20.resume": {
+      "run": "e-2026-10-14-agent",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "on-host Sandbox.connect resume, 20 runs",
+      "n": 20,
+      "unit": "s",
+      "values": [
+        0.1396,
+        0.1041,
+        0.143,
+        0.1885,
+        0.0908,
+        0.1719,
+        0.086,
+        0.1212,
+        0.2117,
+        0.1369,
+        0.1407,
+        0.3607,
+        0.5537,
+        0.4789,
+        0.12,
+        0.1457,
+        0.5704,
+        0.4567,
+        0.1167,
+        0.6156
+      ],
+      "min": 0.086,
+      "max": 0.6156
+    },
+    "e.d_cold": {
+      "run": "e-2026-10-14-perf",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "new session until the answer, D-matched 5-run cold protocol",
+      "n": 5,
+      "unit": "s",
+      "values": [
+        7.943,
+        2.536,
+        3.599,
+        3.653,
+        3.337
+      ],
+      "min": 2.536,
+      "max": 7.943,
+      "median": 3.599
+    },
+    "e.d_sandbox_ready": {
+      "run": "e-2026-10-14-perf",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "E2B sandbox created until Ready during the 5 cold turns",
+      "n": 5,
+      "unit": "s",
+      "values": [
+        0.056,
+        0.068,
+        0.068,
+        0.057,
+        0.066
+      ],
+      "min": 0.056,
+      "max": 0.068,
+      "median": 0.066
+    },
+    "e.d_agent_turn": {
+      "run": "e-2026-10-14-perf",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "Prompt Agent turn duration after sandbox Ready during the 5 cold turns",
+      "n": 5,
+      "unit": "s",
+      "values": [
+        7.75,
+        2.28,
+        3.44,
+        3.52,
+        3.19
+      ],
+      "min": 2.28,
+      "max": 7.75,
+      "median": 3.44
+    },
+    "e.d_warm": {
+      "run": "e-2026-10-14-perf",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "follow-up turns in the same session, D-matched warm protocol",
+      "n": 3,
+      "unit": "s",
+      "values": [
+        5.03,
+        3.19,
+        3.39
+      ],
+      "min": 3.19,
+      "max": 5.03,
+      "median": 3.39
+    },
+    "e.c4": {
+      "run": "e-2026-10-14-perf",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "4 new sessions at once on 1 Standard_D4ds_v7 VM",
+      "n": 4,
+      "unit": "sessions",
+      "answered": 4,
+      "answered_s": [
+        3.902,
+        3.115,
+        3.898,
+        3.168
+      ],
+      "refused": 0,
+      "max_live_vms": 7
+    },
+    "e.c8": {
+      "run": "e-2026-10-14-perf",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "8 new sessions at once on 1 Standard_D4ds_v7 VM",
+      "n": 8,
+      "unit": "sessions",
+      "answered": 8,
+      "answered_s": [
+        4.589,
+        2.481,
+        4.634,
+        6.944,
+        5.398,
+        3.701,
+        7.345,
+        3.819
+      ],
+      "refused": 0,
+      "max_live_vms": 9
+    },
+    "e.capacity": {
+      "run": "e-2026-10-14-perf",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "concurrent live Firecracker micro-VMs observed on one host VM with 0 refusals",
+      "n": 1,
+      "unit": "sessions",
+      "max_sessions": 9,
+      "node_sku": "Standard_D4ds_v7"
+    },
+    "e.pod_lost": {
+      "run": "e-2026-10-14-perf",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "sandbox killed until a replacement E2B sandbox is Ready",
+      "n": 1,
+      "unit": "s",
+      "values": [
+        0.1
+      ],
+      "value": 0.1
+    },
+    "e.other_session_followup": {
+      "run": "e-2026-10-14-perf",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "follow-up on a different live session after the sandbox kill; that session kept LANTERN-7",
+      "n": 1,
+      "unit": "s",
+      "values": [
+        2.61
+      ],
+      "value": 2.61
     }
   }
 }

@@ -27,7 +27,7 @@ def test_pages_equal_a_fresh_render_and_render_is_idempotent():
 def test_runs_are_grouped_by_path_then_date(name):
     text = committed()[name]
     if name.startswith("README"):
-        order = re.findall(r"(?m)^\| `([a-d]-\d{4}-\d{2}-\d{2}(?:-[a-z]+)*)` \|", text)
+        order = re.findall(r"(?m)^\| `([a-e]-\d{4}-\d{2}-\d{2}(?:-[a-z]+)*)` \|", text)
     else:
         order = list(vd.run_sections(text))
     assert order

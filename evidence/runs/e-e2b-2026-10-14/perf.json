@@ -1,0 +1,411 @@
+{
+  "run_id": "e-2026-10-14-perf",
+  "path": "E",
+  "what": "Foundry Prompt Agent + E2B on Azure VM: cold start (n=5), follow-up turns, 4 and 8 concurrent sessions, and sandbox replacement",
+  "date_utc": "2026-10-14",
+  "region": "eastus2",
+  "model": "gpt-5.4-mini",
+  "node_sku": "Standard_D4ds_v7",
+  "host_nodes": 1,
+  "max_concurrent_sandboxes_observed": 9,
+  "request": "POST <Foundry project>/openai/v1/responses {\"input\": <input>} with Prompt Agent calling E2B sandbox tool",
+  "client": "Windows workstation in East US 2 calling Foundry endpoint and E2B VM in East US 2",
+  "inputs": {
+    "cold": "Reply with exactly COLD-{i}",
+    "warm_first": "Remember the code word LANTERN-7. Reply only OK.",
+    "warm_followup_1": "What is the code word? Reply with the word only.",
+    "warm_followup_n": "Reply with exactly WARM-{i}",
+    "scale_turn1": "Remember SCALE-{i}. Reply only OK.",
+    "scale_turn2": "What did I ask you to remember? Word only."
+  },
+  "cold_turns": [
+    {
+      "started_utc": "06:14:58.187",
+      "http": 200,
+      "wall_s": 7.943,
+      "agent_turn_s": 7.75,
+      "sandbox_create_to_ready_s": 0.056,
+      "sandbox_tool_s": 0.121,
+      "status": "completed",
+      "answer": "COLD-1",
+      "sandbox_id": "e2b-cold-1",
+      "runtime": "firecracker"
+    },
+    {
+      "started_utc": "06:15:06.244",
+      "http": 200,
+      "wall_s": 2.536,
+      "agent_turn_s": 2.28,
+      "sandbox_create_to_ready_s": 0.068,
+      "sandbox_tool_s": 0.106,
+      "status": "completed",
+      "answer": "COLD-2",
+      "sandbox_id": "e2b-cold-2",
+      "runtime": "firecracker"
+    },
+    {
+      "started_utc": "06:15:08.862",
+      "http": 200,
+      "wall_s": 3.599,
+      "agent_turn_s": 3.44,
+      "sandbox_create_to_ready_s": 0.068,
+      "sandbox_tool_s": 0.128,
+      "status": "completed",
+      "answer": "COLD-3",
+      "sandbox_id": "e2b-cold-3",
+      "runtime": "firecracker"
+    },
+    {
+      "started_utc": "06:15:12.567",
+      "http": 200,
+      "wall_s": 3.653,
+      "agent_turn_s": 3.52,
+      "sandbox_create_to_ready_s": 0.057,
+      "sandbox_tool_s": 0.134,
+      "status": "completed",
+      "answer": "COLD-4",
+      "sandbox_id": "e2b-cold-4",
+      "runtime": "firecracker"
+    },
+    {
+      "started_utc": "06:15:16.366",
+      "http": 200,
+      "wall_s": 3.337,
+      "agent_turn_s": 3.19,
+      "sandbox_create_to_ready_s": 0.066,
+      "sandbox_tool_s": 0.116,
+      "status": "completed",
+      "answer": "COLD-5",
+      "sandbox_id": "e2b-cold-5",
+      "runtime": "firecracker"
+    }
+  ],
+  "warm_turns": [
+    {
+      "started_utc": "06:15:19.941",
+      "http": 200,
+      "wall_s": 2.757,
+      "sandbox_tool_s": 0.137,
+      "status": "completed",
+      "answer": "OK"
+    },
+    {
+      "started_utc": "06:15:22.639",
+      "http": 200,
+      "wall_s": 5.03,
+      "sandbox_tool_s": 0.033,
+      "status": "completed",
+      "answer": "LANTERN-7"
+    },
+    {
+      "started_utc": "06:15:27.665",
+      "http": 200,
+      "wall_s": 3.19,
+      "sandbox_tool_s": 0.029,
+      "status": "completed",
+      "answer": "WARM-1"
+    },
+    {
+      "started_utc": "06:15:30.852",
+      "http": 200,
+      "wall_s": 3.39,
+      "sandbox_tool_s": 0.028,
+      "status": "completed",
+      "answer": "WARM-2"
+    }
+  ],
+  "scalability": [
+    {
+      "concurrency": 4,
+      "answered": 4,
+      "refused": 0,
+      "max_live_firecracker_processes": 7,
+      "sessions": [
+        {
+          "slot": 1,
+          "sandbox_id": "e2b-c4-1",
+          "sandbox_create_to_ready_s": 0.132,
+          "live_firecracker_processes_seen": 7,
+          "turn1": {
+            "started_utc": "06:15:34.348",
+            "http": 200,
+            "wall_s": 3.902,
+            "answer": "OK",
+            "error_code": null
+          },
+          "turn2": {
+            "started_utc": "06:15:38.336",
+            "http": 200,
+            "wall_s": 2.37,
+            "answer": "SCALE-1",
+            "error_code": null
+          },
+          "remembered": true
+        },
+        {
+          "slot": 2,
+          "sandbox_id": "e2b-c4-2",
+          "sandbox_create_to_ready_s": 0.185,
+          "live_firecracker_processes_seen": 5,
+          "turn1": {
+            "started_utc": "06:15:34.348",
+            "http": 200,
+            "wall_s": 3.115,
+            "answer": "OK",
+            "error_code": null
+          },
+          "turn2": {
+            "started_utc": "06:15:37.560",
+            "http": 200,
+            "wall_s": 4.25,
+            "answer": "SCALE-2",
+            "error_code": null
+          },
+          "remembered": true
+        },
+        {
+          "slot": 3,
+          "sandbox_id": "e2b-c4-3",
+          "sandbox_create_to_ready_s": 0.148,
+          "live_firecracker_processes_seen": 7,
+          "turn1": {
+            "started_utc": "06:15:34.348",
+            "http": 200,
+            "wall_s": 3.898,
+            "answer": "OK",
+            "error_code": null
+          },
+          "turn2": {
+            "started_utc": "06:15:38.337",
+            "http": 200,
+            "wall_s": 4.57,
+            "answer": "SCALE-3",
+            "error_code": null
+          },
+          "remembered": true
+        },
+        {
+          "slot": 4,
+          "sandbox_id": "e2b-c4-4",
+          "sandbox_create_to_ready_s": 0.148,
+          "live_firecracker_processes_seen": 5,
+          "turn1": {
+            "started_utc": "06:15:34.349",
+            "http": 200,
+            "wall_s": 3.168,
+            "answer": "OK",
+            "error_code": null
+          },
+          "turn2": {
+            "started_utc": "06:15:37.657",
+            "http": 200,
+            "wall_s": 3.19,
+            "answer": "SCALE-4",
+            "error_code": null
+          },
+          "remembered": true
+        }
+      ]
+    },
+    {
+      "concurrency": 8,
+      "answered": 8,
+      "refused": 0,
+      "max_live_firecracker_processes": 9,
+      "sessions": [
+        {
+          "slot": 1,
+          "sandbox_id": "e2b-c8-1",
+          "sandbox_create_to_ready_s": 0.279,
+          "live_firecracker_processes_seen": 9,
+          "turn1": {
+            "started_utc": "06:15:43.008",
+            "http": 200,
+            "wall_s": 4.589,
+            "answer": "OK",
+            "error_code": null
+          },
+          "turn2": {
+            "started_utc": "06:15:47.705",
+            "http": 200,
+            "wall_s": 3.6,
+            "answer": "SCALE-1",
+            "error_code": null
+          },
+          "remembered": true
+        },
+        {
+          "slot": 2,
+          "sandbox_id": "e2b-c8-2",
+          "sandbox_create_to_ready_s": 0.131,
+          "live_firecracker_processes_seen": 9,
+          "turn1": {
+            "started_utc": "06:15:43.008",
+            "http": 200,
+            "wall_s": 2.481,
+            "answer": "OK",
+            "error_code": null
+          },
+          "turn2": {
+            "started_utc": "06:15:45.582",
+            "http": 200,
+            "wall_s": 3.04,
+            "answer": "SCALE-2",
+            "error_code": null
+          },
+          "remembered": true
+        },
+        {
+          "slot": 3,
+          "sandbox_id": "e2b-c8-3",
+          "sandbox_create_to_ready_s": 0.134,
+          "live_firecracker_processes_seen": 9,
+          "turn1": {
+            "started_utc": "06:15:43.008",
+            "http": 200,
+            "wall_s": 4.634,
+            "answer": "OK",
+            "error_code": null
+          },
+          "turn2": {
+            "started_utc": "06:15:47.722",
+            "http": 200,
+            "wall_s": 2.95,
+            "answer": "SCALE-3",
+            "error_code": null
+          },
+          "remembered": true
+        },
+        {
+          "slot": 4,
+          "sandbox_id": "e2b-c8-4",
+          "sandbox_create_to_ready_s": 0.124,
+          "live_firecracker_processes_seen": 7,
+          "turn1": {
+            "started_utc": "06:15:43.009",
+            "http": 200,
+            "wall_s": 6.944,
+            "answer": "OK",
+            "error_code": null
+          },
+          "turn2": {
+            "started_utc": "06:15:50.296",
+            "http": 200,
+            "wall_s": 3.91,
+            "answer": "SCALE-4",
+            "error_code": null
+          },
+          "remembered": true
+        },
+        {
+          "slot": 5,
+          "sandbox_id": "e2b-c8-5",
+          "sandbox_create_to_ready_s": 0.288,
+          "live_firecracker_processes_seen": 9,
+          "turn1": {
+            "started_utc": "06:15:43.009",
+            "http": 200,
+            "wall_s": 5.398,
+            "answer": "OK",
+            "error_code": null
+          },
+          "turn2": {
+            "started_utc": "06:15:48.510",
+            "http": 200,
+            "wall_s": 3.6,
+            "answer": "SCALE-5",
+            "error_code": null
+          },
+          "remembered": true
+        },
+        {
+          "slot": 6,
+          "sandbox_id": "e2b-c8-6",
+          "sandbox_create_to_ready_s": 0.241,
+          "live_firecracker_processes_seen": 9,
+          "turn1": {
+            "started_utc": "06:15:43.009",
+            "http": 200,
+            "wall_s": 3.701,
+            "answer": "OK",
+            "error_code": null
+          },
+          "turn2": {
+            "started_utc": "06:15:46.829",
+            "http": 200,
+            "wall_s": 3.27,
+            "answer": "SCALE-6",
+            "error_code": null
+          },
+          "remembered": true
+        },
+        {
+          "slot": 7,
+          "sandbox_id": "e2b-c8-7",
+          "sandbox_create_to_ready_s": 0.225,
+          "live_firecracker_processes_seen": 7,
+          "turn1": {
+            "started_utc": "06:15:43.009",
+            "http": 200,
+            "wall_s": 7.345,
+            "answer": "OK",
+            "error_code": null
+          },
+          "turn2": {
+            "started_utc": "06:15:50.630",
+            "http": 200,
+            "wall_s": 3.31,
+            "answer": "SCALE-7",
+            "error_code": null
+          },
+          "remembered": true
+        },
+        {
+          "slot": 8,
+          "sandbox_id": "e2b-c8-8",
+          "sandbox_create_to_ready_s": 0.139,
+          "live_firecracker_processes_seen": 9,
+          "turn1": {
+            "started_utc": "06:15:43.010",
+            "http": 200,
+            "wall_s": 3.819,
+            "answer": "OK",
+            "error_code": null
+          },
+          "turn2": {
+            "started_utc": "06:15:46.918",
+            "http": 200,
+            "wall_s": 78.99,
+            "answer": "SCALE-8",
+            "error_code": null
+          },
+          "remembered": true
+        }
+      ]
+    }
+  ],
+  "recovery": {
+    "sandbox_killed_utc": "06:17:09.765",
+    "replacement_ready_s": 0.1,
+    "followup_on_live_session": {
+      "http": 200,
+      "wall_s": 2.61,
+      "answer": "LANTERN-7",
+      "state_preserved": true
+    }
+  },
+  "_sources": [
+    {
+      "file": "e-2026-10-14-perf.json",
+      "sha256": "543cb94d67089a5a1f1915b266bd6a35ebad91ff56c403ad3d70ee1a5539e59d",
+      "bytes": 10400,
+      "role": "B/D-matched cold, warm, concurrency and recovery record"
+    },
+    {
+      "file": "run_abcd_matched_benchmarks.py",
+      "sha256": "8e8f6fc5b7b61c707f596666b6d76ce23fa4a5147f5ef38739f621b2b30a20b0",
+      "bytes": 24728,
+      "role": "benchmark driver"
+    }
+  ]
+}

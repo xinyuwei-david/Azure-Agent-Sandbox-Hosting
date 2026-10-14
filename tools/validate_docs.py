@@ -41,7 +41,7 @@ VALIDATION_HEADINGS = {
 }
 RUN_PARTS = {"en": ["**Question.**", "**Input.**", "**Varied and fixed.**", "**Result.**", "**Boundary.**"],
              "zh": ["**问题。**", "**输入。**", "**变量与固定项。**", "**结果。**", "**边界。**"]}
-RUN_ID_PATTERN = r"[a-d]-\d{4}-\d{2}-\d{2}(?:-[a-z]+)*"
+RUN_ID_PATTERN = r"[a-e]-\d{4}-\d{2}-\d{2}(?:-[a-z]+)*"
 RUN_SECTION_RE = re.compile(rf"(?ms)^### ({RUN_ID_PATTERN})[:：].*?(?=^### |^## |\Z)")
 SUPPORT_RUNS = {"abc-2026-09-27-foundation", "d-2026-09-29-cold-early", "d-2026-09-29-model-direct",
                 "d-2026-09-29-capacity", "d-2026-09-22-field"}
@@ -101,20 +101,20 @@ def check_readme_sections(pages: dict[str, str]) -> list[str]:
 
 def check_four_path_tables(pages: dict[str, str]) -> list[str]:
     expected = {
-        "README.md": "| | A · ACA Sandboxes | B · Foundry hosted agent | C · AKS + agent-sandbox | D · BYO-AKS |",
-        "README_CN.md": "| | A · ACA Sandboxes | B · Foundry hosted agent | C · AKS + agent-sandbox | D · BYO-AKS |",
+        "README.md": "| | A · ACA Sandboxes | B · Foundry hosted agent | C · AKS + agent-sandbox | D · BYO-AKS | E · E2B on Azure VM |",
+        "README_CN.md": "| | A · ACA Sandboxes | B · Foundry hosted agent | C · AKS + agent-sandbox | D · BYO-AKS | E · E2B on Azure VM |",
     }
     errors = []
     for name, header in expected.items():
         if header not in pages[name]:
-            errors.append(f"{name}: isolation table must contain paths A, B, C and D in order")
+            errors.append(f"{name}: isolation table must contain paths A, B, C and D (and E) in order")
     return errors
 
 
 def check_information_alignment(pages: dict[str, str]) -> list[str]:
     claims = json.loads(read("evidence/claims.json"))
     errors = []
-    letters = ("A", "B", "C", "D")
+    letters = ("A", "B", "C", "D", "E")
     en_names = " | ".join(f"{letter} · {claims['letter_mapping'][letter]['name']}" for letter in letters)
     header = f"| Question | {en_names} |"
     if header not in pages["README.md"]:

@@ -12,6 +12,7 @@
 - **B · Foundry hosted agent。** `azd ai agent init` 把 workshop 的 `azure.yaml` 绑定到已有项目，`azd deploy` 构建并发布一个版本。Learn 的描述是：每会话一个 VM 级隔离的沙箱，空闲期间保留 `$HOME` 和 `/files`，空闲超时 2–60 分钟（默认 15），30 天不活跃后删除会话。
 - **C · AKS + agent-sandbox。** AKS 开启 Workload Identity 和 Blob CSI 驱动，一个 `KataVmIsolation` 的 Azure Linux 节点池（我们用 `Standard_D4s_v3`），agent-sandbox `v0.5.2`（`agents.x-k8s.io/v1beta1`，kind `Sandbox`），一个存状态的 Blob PVC，以及只允许一个来源地址访问的 LoadBalancer。挂起和恢复就是 `spec.operatingMode: Suspended | Running`；pod 被删除，文件状态从 Blob 恢复，不是内存快照恢复。Learn 写明的技术栈：Azure Linux 主机、Microsoft Hyper-V、Cloud Hypervisor VMM、Kata Containers。
 - **D · BYO-AKS。** 最初只有一个 Kata 节点时，`foundry-system` 里读到 13 个运行时 pod：9 个固定的 Deployment 副本（router ×3，前面是 `:443` 的 LoadBalancer；controller ×2；identity proxy ×2；telemetry controller ×2）加 4 个 DaemonSet。每个 DaemonSet 会在每个匹配的 Kata 节点上增加一个 pod，所以总数随节点池增长。每个会话是独立的 Deployment、ReplicaSet 和 pod，`runtimeClassName: kata-vm-isolation`，放在按项目划分的命名空间里。
+- **E · E2B on Azure VM。** 一台开启嵌套虚拟化（`/dev/kvm`）的 Ubuntu 24.04 LTS Gen2 VM（`Standard_D4ds_v7`）运行开源 E2B Embed Docker Compose 栈（`e2b-dev/runtime`，固定在 `588e5b9`）。每次 `Sandbox.create("base")` 启动一个 Firecracker `v1.14-0.2.0` micro-VM（2 vCPU、512 MB、guest 内核 `6.1.177+`）；`beta_pause` 把内存和磁盘快照（`vm_state` + `mem_file`）存到本地 SSD，`Sandbox.connect` 恢复。Foundry Prompt Agent（`gpt-5.4-mini`）通过 `3000` 和 `3002` 端口上的函数工具调用沙箱。
 
 为什么这样计时：
 
@@ -343,6 +344,95 @@ workshop 的脚本（`module-01/setup.sh`、`module-03/prepare-agent-sandbox.sh`
 
 **边界。** 只删了一次。后续那一轮发给的是另一个存活会话，而不是被删 pod 的会话。它说明节点池继续服务，而且另一个会话保留了 `LANTERN-7`；它**不能**证明被删会话自身的连续性。
 
+### e-2026-10-14-agent：Foundry Prompt Agent + Azure VM 上的 E2B Firecracker 沙箱，共 3 次
+
+**问题。** 当 E2B Embed 运行在开启 `/dev/kvm` 的 Azure Gen2 VM 上时，Firecracker 沙箱的创建、暂停和恢复有多快？在与 A 相同的 3 次完整协议下，Foundry Prompt Agent 跨暂停和恢复的回答耗时是多少？
+
+**输入。** 每次新建一个 E2B `base` 沙箱和一个 Foundry 会话（East US 2 的 `gpt-5.4-mini`），并依次询问下面这些原样问题（[`evidence/runs/e-e2b-2026-10-14/agent-runs.json`](evidence/runs/e-e2b-2026-10-14/agent-runs.json)）：
+
+<!-- BEGIN GENERATED: e-agent-input -->
+> 宿主机 VM：Standard_D4ds_v7；E2B `base` 模板（2 vCPU，512 MB，经 `beta_pause` 保存 Firecracker 内存+磁盘快照）。
+> 请求：POST <Foundry project>/openai/v1/responses with Prompt Agent calling function tool run_in_e2b_sandbox on E2B API :3000/:3002。
+> 第一个问题："Where is Bangkok? Answer in one short sentence."
+> 之后每一轮："How many questions have I asked before this one? Number only."
+<!-- END GENERATED: e-agent-input -->
+
+**变量与固定项。** 3 次 agent 实测之间只有轮次不同；20 次微基准在宿主机 VM 上直接访问 `localhost:3000` 和 `localhost:3002`。
+
+**结果。**
+
+<!-- BEGIN GENERATED: e-agent -->
+| 次 | 创建 → Running | 第一个回答 | 冷启动 | 后续 | 暂停 | 恢复 | 恢复后回答 | 恢复 → 回答 | 回答 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---|
+| 1 | 0.14 | 4.12 | 4.26 | 2.95 | 0.13 | 0.08 | 6.4 | 6.48 | Bangkok is the capital of Thailand in Southeast Asia. / 2 / 3 / 4 |
+| 2 | 0.07 | 2.82 | 2.89 | 2.83 | 0.11 | 0.11 | 12.71 | 12.82 | Bangkok is the capital of Thailand in Southeast Asia. / 1 / 2 / 3 |
+| 3 | 0.06 | 8.38 | 8.44 | 3.92 | 0.15 | 0.09 | 4.64 | 4.73 | Bangkok is the capital city of Thailand. / 1 / 2 / 3 |
+| **中位数** | **0.07** | **4.12** | **4.26** | **2.95** | **0.13** | **0.09** | **6.4** | **6.48** |  |
+
+本机 20 次沙箱微基准（零跨网 RTT）：创建 0.051–0.089 s（n=20），热命令 0.007–0.01 s（n=20），暂停 0.051–1.81 s（n=20），恢复 0.086–0.62 s（n=20）。沙箱内读回：VMM `firecracker` `v1.14-0.2.0`，guest 内核 `6.1.177+`，宿主机内核 `6.17.0-1022-azure`。
+<!-- END GENERATED: e-agent -->
+
+3 次 agent 实测的 `vmm_type` 都是 <!--v:e.vmm.value-->firecracker<!--/v-->，沙箱内的对话历史在暂停和恢复后继续增长的有 <!--v:e.state_kept.count-->3<!--/v--> 次（共 3 次）。VM 首次部署耗时 <!--v:e.setup.value-->177<!--/v--> s。
+
+**边界。**
+- 单台 East US 2 `Standard_D4ds_v7` VM 上的三次 agent 实测加 20 次本机微基准。
+- Prompt Agent 运行在 Foundry 中并通过网络把 E2B 沙箱作为函数工具调用，而 A 的 reflection agent 直接运行在 ACA 沙箱内部。
+
+### e-2026-10-14-perf：E2B 上的冷启动、后续回答、并发与沙箱替换
+
+**问题。** 在与 D 相同的压测协议（`COLD-{i}`、`LANTERN-7` 多轮追问、4 和 8 并发会话以及沙箱删除替换）下，运行 E2B 的单台 `Standard_D4ds_v7` VM 表现如何？
+
+**输入。** 与 D 对齐的压测脚本及下面这些原样输入（[`evidence/runs/e-e2b-2026-10-14/perf.json`](evidence/runs/e-e2b-2026-10-14/perf.json)）：
+
+<!-- BEGIN GENERATED: e-perf-input -->
+> 请求：POST <Foundry project>/openai/v1/responses {"input": <input>} with Prompt Agent calling E2B sandbox tool。
+> 新会话："Reply with exactly COLD-{i}"（n = 1、2、3、4、5）
+> 同一会话："Remember the code word LANTERN-7. Reply only OK."，然后 "What is the code word? Reply with the word only."，再 "Reply with exactly WARM-{i}"（n = 1、2）
+> 并发时每个会话："Remember SCALE-{i}. Reply only OK."，然后 "What did I ask you to remember? Word only."
+<!-- END GENERATED: e-perf-input -->
+
+**变量与固定项。** 冷启动重复 5 个新会话；并发在 1 台 `Standard_D4ds_v7` VM 上分别测试 4 和 8 个并发会话。
+
+**结果。** 新会话：
+
+<!-- BEGIN GENERATED: e-cold -->
+| 开始（UTC） | 回答 | 沙箱创建 → Ready，s | Agent 轮次，s | 新会话 → 回答，s |
+|---|---|---:|---:|---:|
+| 06:14:58 | COLD-1 | 0.056 | 7.75 | 7.94 |
+| 06:15:06 | COLD-2 | 0.068 | 2.28 | 2.54 |
+| 06:15:08 | COLD-3 | 0.068 | 3.44 | 3.6 |
+| 06:15:12 | COLD-4 | 0.057 | 3.52 | 3.65 |
+| 06:15:16 | COLD-5 | 0.066 | 3.19 | 3.34 |
+
+5 次冷启动汇总：沙箱创建 → Ready 中位数 0.066 s（0.056–0.068；n=5），Prompt Agent 轮次 中位数 3.44 s（2.28–7.75；n=5），端到端新会话 → 回答 中位数 3.6 s（2.54–7.94；n=5）。
+<!-- END GENERATED: e-cold -->
+
+同一会话的后续回答：
+
+<!-- BEGIN GENERATED: e-warm -->
+| 轮次 | 回答 | 沙箱工具耗时，s | 客户端耗时，s |
+|---|---|---:|---:|
+| 1（新会话） | OK | 0.14 | 2.76 |
+| 2 | LANTERN-7 | 0.033 | 5.03 |
+| 3 | WARM-1 | 0.029 | 3.19 |
+| 4 | WARM-2 | 0.028 | 3.39 |
+<!-- END GENERATED: e-warm -->
+
+并发与沙箱替换：
+
+<!-- BEGIN GENERATED: e-scale -->
+| 并发 | 回答 | 拒绝 | 并发 Firecracker VM 数 | 第 1 轮耗时，s |
+|---:|---|---|---:|---|
+| 4 | 4/4 | 0/4 | 7 | 3.9, 3.12, 3.9, 3.17 |
+| 8 | 8/8 | 0/8 | 9 | 4.59, 2.48, 4.63, 6.94, 5.4, 3.7, 7.34, 3.82 |
+
+`kill` 删除沙箱后的替换：新 Firecracker 沙箱在 0.1 s 内就绪；另一个存活会话的追问 HTTP 200，2.61 s，"LANTERN-7"，保留状态：true。
+<!-- END GENERATED: e-scale -->
+
+**边界。**
+- 单台 VM 部署（`Standard_D4ds_v7`，4 vCPU / 16 GiB 内存）。8 并发时，其中一个追问轮次（`SCALE-8`）因模型与工具串行等待耗时 78.99 s，全部 8/8 会话均成功回答并记住了各自口令。
+- 与 D 的恢复测试一致，`kill` 删除沙箱后的追问发给另一个存活会话（`LANTERN-7`），证明宿主机继续正常服务且替代沙箱在 <!--v:e.pod_lost.value-->0.1<!--/v--> s 内就绪。
+
 ### 可以重算的数字
 
 上面每个发布指标都来自 [`evidence/measurements.json`](evidence/measurements.json)。[`tools/build_measurements.py`](tools/build_measurements.py) 会先按 [`evidence/runs/INDEX.json`](evidence/runs/INDEX.json) 校验每个文件的 SHA-256，再从 `evidence/runs/` 重算全部指标。它还检查：A 每次的冷启动等于创建加第一个回答、恢复等于 resume 加回答；D 每个冷启动 pod 的创建到 Ready 与 Kubernetes 时间戳一致，且是 `kata-vm-isolation`；D 的后续会话和删除 pod 后使用的另一个存活会话都记住了 `LANTERN-7`。奇数个样本才给中位数，偶数个样本直接列出数值。
@@ -405,7 +495,7 @@ python -m pytest -q
 - **`pytest`** 把上面这些检查作为测试运行，从原始数值重算中位数，用保存的 pod 和节点 JSON 测 `check_isolation.py`，在不装 Azure SDK 的情况下运行每个工具的 `--help`，并逐项破坏输入（篡改运行文件、无效耗时、倒序时间线、缺少并发样本、改一个数字、插入订阅 ID、删一个标题、把表格放到输入前面、打乱实测顺序），确认它会失败。
 - 在线工具的 mock 测试还检查：并发追问失败、跳过恢复、读取或删除 pod 失败、历史丢失、参数无效和配置缺失都不能报成功；这些测试不会调用 Azure。
 
-CI 在 Ubuntu 和 Windows 上用 Python 3.12 运行同样的检查（[工作流](https://github.com/david-xinyuwei/david-share/blob/master/.github/workflows/agent-sandbox-hosting-ci.yml)）。
+CI 在 Ubuntu 和 Windows 上用 Python 3.12 运行同样的检查（[工作流](https://github.com/xinyuwei-david/Azure-Agent-Sandbox-Hosting/blob/main/.github/workflows/docs-ci.yml)）。
 
 在线检查需要 Azure 和 README 里创建的资源：`tools/aca_sandbox.py`、`tools/measure_aca.py`、`tools/measure_responses.py`，以及不带 `--pods-json` 的 `tools/check_isolation.py`。
 
@@ -432,7 +522,7 @@ CI 在 Ubuntu 和 Windows 上用 Python 3.12 运行同样的检查（[工作流]
 - `SOURCE_FACT`：[固定版本 module-02 的实现](https://github.com/oxcp/ainotes/blob/905f2c2/agenthost/module-02/agent-src/main.py) 中，`MODEL_ROUTING=direct` 调用 Foundry project endpoint。如果项目注册了原生 AI Gateway，该请求仍可能经 APIM；不能只凭模式名判断它绕过了网关。
 - `SOURCE_FACT`：状态来源：A [2026-09-23 GA](https://techcommunity.microsoft.com/blog/appsonazureblog/azure-container-apps-sandboxes-now-generally-available/4559125)；B [2026-06 GA](https://azure.microsoft.com/updates?id=563596)（Azure Update 标题 “Generally Available: Hosted agents in Foundry Agent Service”；更早的 [2026-06-02 Build 博客](https://devblogs.microsoft.com/foundry/hosted-agents-build26/)写的是 GA 前的公开预览）；C [Pod Sandboxing 于 2025-11-18 GA](https://azure.microsoft.com/updates?id=526237)，agent-sandbox v0.5.2 为开源项目。
 - `LOCAL_MEASUREMENT`：A 的保存记录显示对话历史长度继续增长。这检查历史连续性，不证明答案精确正确，也不证明任意进程内存都被保留。
-- `SOURCE_FACT`：D 的保底费用 <!--v:d.cost_floor.value-->0.484<!--/v--> USD/h，是两个 `Standard_D4s_v5` 节点各 0.192 USD/h 加 AKS Standard 层 0.10 USD/h，按 2026-09-21 查询的 East US 2 零售价；不含折扣和税。这不是三个 Kata 节点压测池的费用。
+- `SOURCE_FACT`：D 的保底费用 <!--v:d.cost_floor.value-->0.484<!--/v--> USD/h，是两个 `Standard_D4s_v5` 节点各 0.192 USD/h 加 AKS Standard 层 0.10 USD/h，按 2026-09-21 查询的 East US 2 零售价；E 的单 VM 保底费用 <!--v:e.cost_floor.value-->0.344<!--/v--> USD/h，是一台 `Standard_D4ds_v7` Linux VM 0.326 USD/h、一个 Standard 静态公网 IP 0.005 USD/h 加一块 50 GB Premium SSD P6 磁盘 0.013 USD/h，按 2026-10-14 查询的 East US 2 零售价；不含折扣和税。这不是三个 Kata 节点压测池的费用。
 - D 的接入耗时（角色分配约 <!--v:d.role_assignments.value-->120<!--/v--> s、`azd provision` <!--v:d.azd_provision.value-->522<!--/v--> s、`azd deploy` <!--v:d.azd_deploy.value-->212<!--/v--> s）来自更早那份现场记录里的作者控制台；控制台原始输出没有保留。
 
 **目录。**

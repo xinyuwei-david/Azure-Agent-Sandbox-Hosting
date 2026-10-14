@@ -1,33 +1,33 @@
-# 在 Azure 上托管 agent 沙箱的四种方式：ACA Sandboxes、Foundry Hosted Agent、AKS + agent-sandbox、BYO-AKS
+# 在 Azure 上托管 agent 沙箱的五种方式：ACA Sandboxes、Foundry Hosted Agent、AKS + agent-sandbox、BYO-AKS、E2B on Azure VM
 
-[![Paths](https://img.shields.io/badge/paths-A%20%C2%B7%20B%20%C2%B7%20C%20%C2%B7%20D-0078D4)](#目的)
-[![Measured](https://img.shields.io/badge/measured-East%20US%202%2C%202026--09--22%20to%2010--09-0078D4)](#实现效果)
-[![Docs CI](https://github.com/david-xinyuwei/david-share/actions/workflows/agent-sandbox-hosting-ci.yml/badge.svg)](https://github.com/david-xinyuwei/david-share/actions/workflows/agent-sandbox-hosting-ci.yml)
+[![Paths](https://img.shields.io/badge/paths-A%20%C2%B7%20B%20%C2%B7%20C%20%C2%B7%20D%20%C2%B7%20E-0078D4)](#目的)
+[![Measured](https://img.shields.io/badge/measured-East%20US%202%2C%202026--09--22%20to%2010--14-0078D4)](#实现效果)
+[![Docs CI](https://github.com/xinyuwei-david/Azure-Agent-Sandbox-Hosting/actions/workflows/docs-ci.yml/badge.svg)](https://github.com/xinyuwei-david/Azure-Agent-Sandbox-Hosting/actions/workflows/docs-ci.yml)
 
 作者：魏新宇 · [English](README.md)
 
 ## 目的
 
-你希望 agent 的每个会话都跑在 Azure 上独立的 micro-VM（带独立内核的轻量虚拟机）里，接下来要决定由谁来运行这个 micro-VM 和它的生命周期：交给一个托管服务、交给 Foundry，还是放在你自己的 AKS 节点上。四条路径各有取舍，光看产品页很难横向比较它们的秒数。本仓库用同一套可比的有状态交互口径测试四条路径，给出每条路径的复现步骤，并列出实测结果。A 和 C 共用 workshop 的 reflection agent；B 是另一个采用 Agent Framework 和 ResponsesHostServer 的 agent；D 使用产品组的私有预览 sample，所以这不是相同容器的基准测试：
+你希望 agent 的每个会话都跑在 Azure 上独立的 micro-VM（带独立内核的轻量虚拟机）里，接下来要决定由谁来运行这个 micro-VM 和它的生命周期：交给一个托管服务、交给 Foundry，还是放在你自己的 AKS 节点或 Azure VM 上。五条路径各有取舍，如果把沙箱启动、外挂私有存储卷和模型回答揉成一个数字，光看产品页或粗粒度总耗时很难横向比较。本仓库用同一套可比的有状态交互口径测试五条路径，把每个阶段的耗时单独拆开，给出每条路径的复现步骤，并列出实测结果。A 和 C 共用 workshop 的 reflection agent；B 是另一个采用 Agent Framework 和 ResponsesHostServer 的 agent；D 使用产品组的私有预览 sample；E 使用 Foundry Prompt Agent 调用 Azure VM 上的 E2B Firecracker 沙箱工具，所以这不是相同容器的基准测试：
 
-| 问题 | A · ACA Sandboxes | B · Foundry hosted agent | C · AKS + agent-sandbox | D · BYO-AKS |
-|---|---|---|---|---|
-| 状态 | GA（2026-09-23） | GA（2026-06） | Pod Sandboxing GA（2025-11-18）；agent-sandbox v0.5.2 为开源项目 | **私有预览** |
-| 谁负责会话生命周期 | ACA 服务 | Foundry | 你自己：控制器、网关、空闲回收 | Foundry，运行在你的集群上 |
-| 会话的 micro-VM 跑在哪里 | 服务托管的算力 | 微软托管的算力 | 你的 Kata 节点池 | 你的 Kata 节点池 |
-| 带内存快照的挂起 | 支持 | 不支持：空闲后释放算力，恢复时还原 `$HOME` 和 `/files` | 不保存内存快照：你修改 `operatingMode`；pod 被删除，文件状态从 Blob 恢复 | 未测；预览版是否支持挂起须向产品组确认 |
-| 可选规格 / 节点 SKU（文档） | XS：0.25 vCPU / 0.5 GB<br>S：0.5 vCPU / 1 GB<br>M（默认）：1 vCPU / 2 GB<br>L：2 vCPU / 4 GB<br>XL：4 vCPU / 8 GB | 0.5 vCPU / 1 GiB<br>1 vCPU / 2 GiB<br>2 vCPU / 4 GiB<br>不选择 VM SKU | 支持 Kata 的 Gen2 VM SKU，如 Dsv3 系列；须使用 Azure Linux 并支持嵌套虚拟化 | 在预览开通条件内选择 Kata 节点 SKU；具体可选清单须向产品组确认 |
-| 适合的场景 | 要每用户一个 micro-VM、要快照、不想管集群 | 希望 Foundry 托管一切，且它的限制对你没有影响 | 必须自己掌控节点、网络和控制面 | 既要 Foundry 的 agent 平台，**又**要求会话跑在你自己的节点上 |
+| 问题 | A · ACA Sandboxes | B · Foundry hosted agent | C · AKS + agent-sandbox | D · BYO-AKS | E · E2B on Azure VM |
+|---|---|---|---|---|---|
+| 状态 | GA（2026-09-23） | GA（2026-06） | Pod Sandboxing GA（2025-11-18）；agent-sandbox v0.5.2 为开源项目 | **私有预览** | E2B Embed 开源版（`588e5b9`），运行在 Azure Gen2 VM 上 |
+| 谁负责会话生命周期 | ACA 服务 | Foundry | 你自己：控制器、网关、空闲回收 | Foundry，运行在你的集群上 | 你自己：你的 VM 上的 E2B 编排器，作为 Foundry agent 工具被调用 |
+| 会话的 micro-VM 跑在哪里 | 服务托管的算力 | 微软托管的算力 | 你的 Kata 节点池 | 你的 Kata 节点池 | 你开启嵌套虚拟化（`/dev/kvm`）的 Azure VM |
+| 带内存快照的挂起 | 支持 | 不支持：空闲后释放算力，恢复时还原 `$HOME` 和 `/files` | 不保存内存快照：你修改 `operatingMode`；pod 被删除，文件状态从 Blob 恢复 | 未测；预览版是否支持挂起须向产品组确认 | 支持：`beta_pause` 保存 Firecracker 内存和磁盘快照（`vm_state` + `mem_file`） |
+| 可选规格 / 节点 SKU（文档） | XS：0.25 vCPU / 0.5 GB<br>S：0.5 vCPU / 1 GB<br>M（默认）：1 vCPU / 2 GB<br>L：2 vCPU / 4 GB<br>XL：4 vCPU / 8 GB | 0.5 vCPU / 1 GiB<br>1 vCPU / 2 GiB<br>2 vCPU / 4 GiB<br>不选择 VM SKU | 支持 Kata 的 Gen2 VM SKU，如 Dsv3 系列；须使用 Azure Linux 并支持嵌套虚拟化 | 在预览开通条件内选择 Kata 节点 SKU；具体可选清单须向产品组确认 | 支持嵌套虚拟化的 Gen2 VM SKU，如 `Standard_D4ds_v7`；E2B `base` 模板默认 2 vCPU / 512 MB |
+| 适合的场景 | 要每用户一个 micro-VM、要快照、不想管集群 | 希望 Foundry 托管一切，且它的限制对你没有影响 | 必须自己掌控节点、网络和控制面 | 既要 Foundry 的 agent 平台，**又**要求会话跑在你自己的节点上 | 希望在自有 VM 上获得 100 ms 以内的 Firecracker 创建与内存快照，并由 Foundry agent 作为工具调用 |
 
-产品能力来自 Microsoft Learn，状态来自下文链接的官方公告，实测声明来自我们的运行记录，最后一行是我们的选型建议。一般企业 agent 在 B 的限制可接受时先选 B。对于需要按用户长期运行、要内存快照又不想管集群的场景，先选 A。只有执行节点必须归你时才选 C 或 D；如果还要求 Foundry 继续运行 agent 平台，选 D。
+产品能力来自 Microsoft Learn，状态来自下文链接的官方公告，实测声明来自我们的运行记录，最后一行是我们的选型建议。一般企业 agent 在 B 的限制可接受时先选 B。对于需要按用户长期运行、要内存快照又不想管集群的场景，先选 A。只有执行节点必须归你时才选 C、D 或 E；如果要求 Foundry 直接把会话 pod 调度到你的 AKS 集群上选 D，如果希望由 Foundry Prompt Agent 按工具调用单台 Azure VM 上自建的 Firecracker 沙箱则选 E。
 
 可选项分三类：[A 的沙箱资源档位](https://learn.microsoft.com/azure/container-apps/sandboxes-overview#resource-tiers)、[B 的沙箱规格](https://learn.microsoft.com/azure/foundry/agents/concepts/hosted-agents#sandbox-sizes)、[C/D 的节点 VM SKU](https://learn.microsoft.com/azure/aks/use-pod-sandboxing)。节点 SKU 不是单会话分配规格；每个 Kata 会话还受 pod 的 requests、limits 和开销限制。节点 SKU 的可用性与配额取决于区域和订阅，D 还须满足预览开通条件。
 
 状态来源：[A 的 GA 公告](https://techcommunity.microsoft.com/blog/appsonazureblog/azure-container-apps-sandboxes-now-generally-available/4559125)、[B 的 GA 公告](https://azure.microsoft.com/updates?id=563596)、[C 的 Pod Sandboxing GA](https://azure.microsoft.com/updates?id=526237)；agent-sandbox 本身是开源项目，不是 Azure 服务。对 C/D，[Kata 只提供计算隔离](https://learn.microsoft.com/azure/aks/concepts-pod-sandboxing)，不隔离控制面、存储与数据路径，也不限制 cluster-admin 的权限。
 
-<img src="images/architecture-zh.png" width="900" alt="A 到 D 四列，每列包含客户端入口、微软托管区和你的订阅。A：ACA Sandboxes 服务和沙箱 micro-VM，你的订阅里有 sandbox group、镜像仓库和 Blob 卷。B：Foundry Agent Service 和每会话沙箱，你的订阅里有项目和 Application Insights。C：AKS 控制面，你的订阅里有控制器、Kata pod VM、Kata 节点池和 Blob PVC。D：Foundry Agent Service，你的订阅里有子网 NSG、foundry-system、每会话 Kata pod VM，以及镜像仓库和存储。">
+<img src="images/architecture-zh.png" width="900" alt="A 到 E 五列，每列包含客户端入口、微软托管区和你的订阅。A：ACA Sandboxes 服务和沙箱 micro-VM，你的订阅里有 sandbox group、镜像仓库和 Blob 卷。B：Foundry Agent Service 和每会话沙箱，你的订阅里有项目和 Application Insights。C：AKS 控制面，你的订阅里有控制器、Kata pod VM、Kata 节点池和 Blob PVC。D：Foundry Agent Service，你的订阅里有子网 NSG、foundry-system、每会话 Kata pod VM，以及镜像仓库和存储。E：Foundry Agent Service，你的订阅里有带 E2B Embed Compose 栈的 Azure VM、每沙箱 Firecracker micro-VM 和本地 SSD。">
 
-这张图说明的是：各组件归谁所有、micro-VM 的边界在哪里。A、C、D 的落点来自我们的读回，B 的 VM 级隔离边界来自 Learn。图里没有画网络细节、身份流转和模型网关。
+这张图说明的是：各组件归谁所有、micro-VM 的边界在哪里。A、C、D、E 的落点来自我们的读回，B 的 VM 级隔离边界来自 Learn。图里没有画网络细节、身份流转和模型网关。
 
 看结果时要用到的几个词：
 
@@ -36,8 +36,8 @@
 | 冷启动（cold） | 新会话或新沙箱从创建到返回第一个回答 |
 | 后续回答（warm） | 同一个运行中会话里的下一轮对话 |
 | 恢复（resume） | 会话已完成挂起：发起恢复 → 第一个回答；不含停止和空闲等待 |
-| pod 丢失（pod lost） | 删除会话所在的 pod，由 Kubernetes 重新创建 |
-| micro-VM | 每个沙箱、会话或 pod 一个带独立 guest 内核的轻量虚拟机（AKS 上是 Kata Containers；ACA 沙箱内读到的 VMM 是 Cloud Hypervisor） |
+| pod 丢失（pod lost） | 删除会话所在的 pod 或沙箱，由 Kubernetes 或调用方重新创建 |
+| micro-VM | 每个沙箱、会话或 pod 一个带独立 guest 内核的轻量虚拟机（AKS 上是 Kata Containers；ACA 沙箱内读到的 VMM 是 Cloud Hypervisor；E2B 在 KVM 上运行 Firecracker） |
 
 ## 操作步骤
 
@@ -53,17 +53,17 @@
 | 4 | A | 创建 sandbox group 并部署 agent 沙箱 | workshop `module-04` + `tools/aca_sandbox.py` |
 | 5 | B | 部署 hosted agent 并调用 | workshop `module-02` |
 | 6 | D | 绑定现有 AKS，部署并调用私有预览 agent | 产品组示例 |
+| 7 | E | 在 Azure Gen2 VM 上部署 E2B Embed 并由 Foundry Prompt Agent 调用 | `e2b-dev/runtime` |
 
-**A = ACA Sandboxes，B = Foundry hosted agent，C = AKS + agent-sandbox，D = BYO-AKS**。上游把 module-02 叫 Solution A、module-03 叫 Solution B、module-04 叫 Solution C；看它时以模块编号为准。只执行所选方案：B 的前置是第 1–2 步；这里 A 的完整示例复用第 3 步创建的镜像和网络，但 ACA 产品本身不依赖 AKS。D 使用已有集群和单独开通的示例，本页不会自动替你新建 D 的集群。
+**A = ACA Sandboxes，B = Foundry hosted agent，C = AKS + agent-sandbox，D = BYO-AKS，E = E2B on Azure VM**。上游把 module-02 叫 Solution A、module-03 叫 Solution B、module-04 叫 Solution C；看它时以模块编号为准。只执行所选方案：B 的前置是第 1–2 步；这里 A 的完整示例复用第 3 步创建的镜像和网络，但 ACA 产品本身不依赖 AKS。D 使用已有集群和单独开通的示例，本页不会自动替你新建 D 的集群。E 在单台开启嵌套虚拟化的 Azure VM 上运行开源 E2B Embed Docker Compose 栈。
 
 **前提。** Bash、Git、curl、带 venv 模块的 Python 3.10+（Ubuntu/Debian 需安装 `python3-venv`）、Azure CLI 2.80+、kubectl、azd 1.34+；执行 `azd ext install microsoft.foundry` 安装扩展。订阅权限需 Owner，或 Contributor 加 Role Based Access Control Administrator，所选区域需有模型配额。部署 A 时，你的身份还需要 `Container Apps SandboxGroup Data Owner` 角色（[Learn](https://learn.microsoft.com/azure/container-apps/sandboxes-overview#prerequisites)）；workshop 的 `sandbox-deploy.sh` 能识别当前登录用户时会自动分配，识别不了只打印警告。使用非生产订阅。C 需要填写实际公网出口 CIDR；这个 HTTP workshop 应用不是生产级 HTTPS/登录部署。
 
 **1. 克隆并填写配置。** 克隆到新目录后编辑 `.env`：填写 `SUBSCRIPTION_ID`、`LOCATION`、`RESOURCE_GROUP`；部署 C 时填写 `C_ALLOW_CIDR`。`SN` 在第 2 步拿到后再填。
 
 ```bash
-git clone --filter=blob:none --sparse --depth=1 https://github.com/david-xinyuwei/david-share.git
-git -C david-share sparse-checkout set Agents/Azure-Agent-Sandbox-Hosting
-cd david-share/Agents/Azure-Agent-Sandbox-Hosting
+git clone --filter=blob:none https://github.com/xinyuwei-david/Azure-Agent-Sandbox-Hosting.git
+cd Azure-Agent-Sandbox-Hosting
 export HOSTING_REPO="$PWD"
 git clone https://github.com/oxcp/ainotes.git "$HOME/ainotes"
 git -C "$HOME/ainotes" checkout 905f2c2
@@ -221,6 +221,18 @@ azd ai agent show
 cd "$HOSTING_REPO"
 ```
 
+**7. E — 在 Azure VM 上部署 E2B Embed。** 在暴露 `/dev/kvm` 的 Ubuntu 24.04 LTS Gen2 VM（如 `Standard_D4ds_v7`）上，并在子网 NSG 中将 E2B 端口限制为你的客户端 CIDR，克隆 `e2b-dev/runtime`、启动 Compose 栈并验证 E2B 健康端点：
+
+```bash
+git clone https://github.com/e2b-dev/runtime.git "$HOME/e2b-runtime"
+git -C "$HOME/e2b-runtime" checkout 588e5b9500b0987bc5a700d91483b03f0ae7d2a2
+(cd "$HOME/e2b-runtime" && docker compose up -d --wait)
+curl --fail-with-body --show-error --max-time 30 "$E2B_API_URL/health"
+cd "$HOSTING_REPO"
+```
+
+成功标志：`/health` 返回 HTTP 200，且 `init-seed` 容器完成 `base` 模板构建。
+
 **完成。** 所选方案应已有能回答的应用及可用入口，而不是仅完成了一条测量命令。冷暖启动压测、隔离检查、历史数字重算见 [VALIDATION_CN.md](VALIDATION_CN.md#测试与离线校验)。
 
 **下线仅在资源所有者明确批准后执行，不属于部署必做项。** 下面每条命令单独一个代码块，只运行你明确要释放的资源对应的那条；停止 AKS 只节省计算费，不会让保留资源费用归零。
@@ -243,6 +255,12 @@ az aks stop -g "$RESOURCE_GROUP" -n "$AKS_NAME"
 az aks stop -g "$BYOAKS_RESOURCE_GROUP" -n "$BYOAKS_CLUSTER"
 ```
 
+释放 E 的 VM：
+
+```bash
+az vm deallocate -g "$E2B_RESOURCE_GROUP" -n "$E2B_VM_NAME"
+```
+
 删除资源组。这会移除共享底座和 A/B/C，`az` 会先要求你确认：
 
 ```bash
@@ -251,44 +269,49 @@ az group delete -n "$RESOURCE_GROUP" --no-wait
 
 ## 实现效果
 
-**每条路径的 micro-VM 跑在哪里。** A、C、D 来自实测读回，B 来自 Learn 写明的隔离边界：
+**每条路径的 micro-VM 跑在哪里。** A、C、D、E 来自实测读回，B 来自 Learn 写明的隔离边界：
 
-| | A · ACA Sandboxes | B · Foundry hosted agent | C · AKS + agent-sandbox | D · BYO-AKS |
-|---|---|---|---|---|
-| 隔离边界 | 每个沙箱一个 micro-VM | 每会话一个 VM 级隔离的沙箱（Learn） | 每个 Sandbox 一个 Kata pod VM | 每个会话一个 Kata pod VM |
-| VMM 和 hypervisor | API 返回 `vmm_type` <!--v:a.vmm.value-->cloudhypervisor<!--/v-->；文档没有写 hypervisor | 未公开；文档只说明 VM 级隔离 | Microsoft Hyper-V 上的 Cloud Hypervisor（Learn） | 与 C 相同 |
-| 读到的内核 | guest <!--v:a.isolation.guest_kernel-->6.12.8+<!--/v--> | 未暴露，无法读回 | pod <!--v:c.isolation.guest_kernel-->6.6.137.mshv1-1.azl3<!--/v-->，runc pod <!--v:c.isolation.system_node_kernel-->6.8.0-1067-azure<!--/v--> | Kata 节点池节点 <!--v:d.node_kernel.value-->6.6.137.mshv2-2.azl3<!--/v-->；未在会话 pod 内读取 |
-| 节点归谁 | 微软 | 微软 | 你 | 你 |
+| | A · ACA Sandboxes | B · Foundry hosted agent | C · AKS + agent-sandbox | D · BYO-AKS | E · E2B on Azure VM |
+|---|---|---|---|---|---|
+| 隔离边界 | 每个沙箱一个 micro-VM | 每会话一个 VM 级隔离的沙箱（Learn） | 每个 Sandbox 一个 Kata pod VM | 每个会话一个 Kata pod VM | 每个沙箱一个 Firecracker micro-VM |
+| VMM 和 hypervisor | API 返回 `vmm_type` <!--v:a.vmm.value-->cloudhypervisor<!--/v-->；文档没有写 hypervisor | 未公开；文档只说明 VM 级隔离 | Microsoft Hyper-V 上的 Cloud Hypervisor（Learn） | 与 C 相同 | Linux KVM（`/dev/kvm`）上的 `vmm_type` <!--v:e.vmm.value-->firecracker<!--/v-->（<!--v:e.isolation.firecracker_version-->v1.14-0.2.0<!--/v-->） |
+| 读到的内核 | guest <!--v:a.isolation.guest_kernel-->6.12.8+<!--/v--> | 未暴露，无法读回 | pod <!--v:c.isolation.guest_kernel-->6.6.137.mshv1-1.azl3<!--/v-->，runc pod <!--v:c.isolation.system_node_kernel-->6.8.0-1067-azure<!--/v--> | Kata 节点池节点 <!--v:d.node_kernel.value-->6.6.137.mshv2-2.azl3<!--/v-->；未在会话 pod 内读取 | guest <!--v:e.isolation.guest_kernel-->6.1.177+<!--/v-->，宿主机 VM <!--v:e.isolation.host_kernel-->6.17.0-1022-azure<!--/v--> |
+| 节点归谁 | 微软 | 微软 | 你 | 你 | 你 |
 
-B 的“每会话一个、VM 级隔离”是 `SOURCE_FACT`，不是本地读回的 VMM 或内核结果。C 和 D 用的是同一个 Kata runtime class，所以隔离方式并不能区分它们，真正的区别在于由谁来运行平台。
+B 的“每会话一个、VM 级隔离”是 `SOURCE_FACT`，不是本地读回的 VMM 或内核结果。C 和 D 用的是同一个 Kata runtime class，所以隔离方式并不能区分它们，真正的区别在于由谁来运行平台。E 在你自己的 Azure Gen2 VM 内直接经 `/dev/kvm` 运行 Firecracker。
 
-**秒数。** A 是 2026-10-09 三次实测的中位数；B 和 C 是 2026-09-27 各一次实测；D 是 2026-09-29 的一轮压测。A 和 C 使用 workshop reflection agent；B 使用 Agent Framework 和 ResponsesHostServer；D 使用私有预览 sample。它们使用同一个模型和同一种有状态两轮交互，但不是相同容器。B 和 D 是从中国的一台笔记本经 Foundry 端点调用的（到 Azure 的往返时延 <!--v:d.client_rtt.range-->320–800<!--/v--> ms）；A 的回答在沙箱内计时，C 在它的 LoadBalancer 处计时。请把同一行作为现场记录来读，不要当作受控的产品基准测试：
+**按阶段拆细的秒数。** 如果把纯沙箱启动、外挂私有 Azure Blob 卷和第一轮 agent 回答揉成一个冷启动数字，A 会因为完整 workshop 配置同步挂载私有 Blob 卷（+<!--v:a.blob_mount_overhead.value-->21.94<!--/v--> s）而显得很慢，但实际上 A 原生支持 `Memory` 内存快照，跨挂起保留会话状态并不需要外挂 Blob 卷。下面把每个阶段单独拆开。A 是 2026-10-09 三次实测的中位数及归因矩阵；B 和 C 是 2026-09-27 各一次实测；D 是 2026-09-29 的一轮压测；E 是 2026-10-14 的一轮压测。A 和 C 使用 workshop reflection agent；B 使用 Agent Framework 和 ResponsesHostServer；D 使用私有预览 sample；E 使用 Foundry Prompt Agent 调用 E2B 沙箱工具。它们使用同一个模型和有状态交互，但不是相同容器。B 和 D 是从中国的一台笔记本经 Foundry 端点调用的（到 Azure 的往返时延 <!--v:d.client_rtt.range-->320–800<!--/v--> ms）；E 是从 East US 2 的工作站调用的；A 的回答在沙箱内计时，C 在它的 LoadBalancer 处计时。请把同一行作为现场记录来读，不要当作受控的产品基准测试：
 
-A 的冷启动和恢复到回答采用分段相加，不是客户端连续端到端计时：SDK 创建或恢复的耗时，加上沙箱内计时的回答耗时。C 的冷启动同样是 apply 到 Ready 加第一个回答。恢复从挂起完成后开始计时，不含停止和空闲等待。B 的各行使用 gateway（APIM）模型路由；direct 路由的结果在 VALIDATION 单独列出。
+A 和 E（A 口径）的冷启动和恢复到回答采用分段相加，不是客户端连续端到端计时：SDK 创建或恢复的耗时，加上沙箱内计时的回答耗时（A）或 Prompt Agent 轮次耗时（E）。C 的冷启动同样是 apply 到 Ready 加第一个回答。恢复从挂起完成后开始计时，不含停止和空闲等待。B 的后续回答行使用 gateway（APIM）模型路由；direct 路由的结果在 VALIDATION 单独列出。
 
-**这些秒数不能用来给四种产品做性能排名。** 各路径的计时位置、问题输入、reasoning 设置、输出 token 数、镜像缓存和样本量，并未统一控制或逐次完整记录。模型名相同不代表时延测试条件相同。数值合理性校验能拦住无效耗时，但不能证明产品性能，也不能补齐缺失的打点。
+**这些秒数不能用来给五种产品做性能排名。** 各路径的计时位置、问题输入、reasoning 设置、输出 token 数、镜像缓存和样本量，并未统一控制或逐次完整记录。模型名相同不代表时延测试条件相同。数值合理性校验能拦住无效耗时，但不能证明产品性能，也不能补齐缺失的打点。
 
 <!-- BEGIN GENERATED: comparison -->
-| 实测或文档项 | A · ACA Sandboxes | B · Foundry hosted agent | C · AKS + agent-sandbox | D · BYO-AKS |
-|---|---|---|---|---|
-| **新会话 → 第一个回答** | 中位数 28.0 s（27.07–50.41；n=3）；SDK 创建 + 沙箱内回答 | 9.43 s（n=1，经 Foundry 端点；模型路由：gateway（APIM）） | 57.65 s（n=1；apply → Ready 44.9 s + 回答 12.75 s） | 中位数 25.49 s（23.53–26.7；n=5），经 Foundry 端点 |
-| **同一会话的后续回答** | 中位数 1.05 s（1.04–1.54；n=3） | 4.03, 5.54 s（n=2）；模型路由：gateway（APIM） | 1.96 s（n=1） | 中位数 12.9 s（11.17–16.42；n=3） |
-| **沙箱或 pod 就绪** | 中位数 24.25 s（24.12–44.86；n=3），create → Running | 不可见（平台托管） | 44.9 s（n=1），apply → Ready | 镜像已缓存 8–10 s（n=6）；新节点 25 s（n=2） |
-| **发起恢复 → 第一个回答（不含停止）** | 中位数 14.45 s（12.44–17.22；n=3）；恢复本身另行统计的中位数 2.83 s | 未测（平台恢复 $HOME） | 34.2 s（n=1；Ready 17.1 s，LoadBalancer 健康 26.1 s） | 未测；预览版是否支持挂起须向产品组确认 |
-| **pod 丢失 → 重新就绪** | 未测（服务托管） | 未测（平台托管） | 23.4 s（n=1）；同一 Sandbox 的状态已恢复 | 23.9 s（n=1）；未测试被删会话的连续性 |
-| **空闲策略（官方说明）** | [官网](https://learn.microsoft.com/azure/container-apps/sandboxes-overview#lifecycle-states)：可配置空闲自动挂起；可选 Memory 或 Disk 快照模式 | [官网](https://learn.microsoft.com/azure/foundry/agents/concepts/hosted-agents#sessions)：空闲超时 2–60 min（默认 15）后释放算力，保留 $HOME 和 /files；30 天不活跃后删除会话 | [官方 API](https://github.com/kubernetes-sigs/agent-sandbox/blob/v0.5.2/docs/api.md)：shutdownTime 是定时到期回收，不是按请求检测空闲；空闲回收需自行实现 | 未找到可核实的官方公开空闲策略；须向产品组确认 |
-| **容量** | 无服务器；配额按并发核数计（文档） | 平台托管，按会话 | 你的 Kata 节点池 | 单个 Standard_D4s_v5 节点观察到最多 5 个会话；3 个节点共 12 个；`500 session_creation_failed`、`429 aks_quota_exceeded` |
-| **本次路径部署耗时** | 146.6 s（sandbox group、VNet 连接、磁盘镜像、卷、沙箱） | 161 s（`azd deploy`；模型路由：gateway（APIM）） | 812.9 s（准备脚本、私有链接、apply） | 854 s（角色、`azd provision`、`azd deploy`；作者控制台记录，原始输出未保留） |
+| 实测或文档项 | A · ACA Sandboxes | B · Foundry hosted agent | C · AKS + agent-sandbox | D · BYO-AKS | E · E2B on Azure VM |
+|---|---|---|---|---|---|
+| **纯沙箱或 pod 就绪（不挂外部卷）** | 中位数 2.31 s（1.6–2.7；n=3）；加 VNet 1.97–2.52 s（n=2），加端口 2.3–2.33 s（n=2） | 不可见（平台托管） | 未单独测无 PVC（挂起会删 pod） | 镜像已缓存 8–10 s（n=6）；新节点 25 s（n=2） | 跨网 中位数 0.07 s（0.06–0.14；n=3）；本机 0.051–0.089 s（n=20） |
+| **外挂私有存储卷附加耗时** | 挂载私有 Blob 卷增加中位数 +21.94 s（create → Running 中位数 24.25 s（24.12–44.86；n=3））；Memory 快照无需挂卷 | 无（平台恢复 $HOME 和 /files） | 带 Blob PVC 的 apply → Ready 44.9 s（n=1；跨挂起保状态必需） | 会话 pod 未挂外部卷 | 无（Firecracker 快照写本机 SSD） |
+| **沙箱就绪后 → 第一个回答** | 中位数 3.88 s（2.82–5.55；n=3），沙箱内计时 | 含在下方新会话总耗时中 | 12.75 s（n=1），在 LoadBalancer 处计时 | 含在下方新会话总耗时中 | 中位数 4.12 s（2.82–8.38；n=3）（A 口径）；中位数 3.44 s（2.28–7.75；n=5）（D 口径） |
+| **新会话 → 第一个回答（不挂外部卷，同口径）** | 合成中位数 6.19 s（镜像创建 2.31 s + 首次回答 3.88 s） | 9.43 s（n=1，经 Foundry 端点；模型路由：gateway（APIM））；5.29 s（n=1，direct） | 不适用（不挂 Blob PVC 无法跨挂起保状态） | 中位数 25.49 s（23.53–26.7；n=5），经 Foundry 端点 | 中位数 4.26 s（2.89–8.44；n=3）（A 口径）；中位数 3.6 s（2.54–7.94；n=5）（D 口径） |
+| **新会话 → 第一个回答（带私有 Blob 卷）** | 中位数 28.0 s（27.07–50.41；n=3）；SDK 创建 + 沙箱内回答 | 未挂外部 Blob 卷 | 57.65 s（n=1；apply → Ready 44.9 s + 回答 12.75 s） | 未挂外部 Blob 卷 | 未挂外部 Blob 卷 |
+| **同一会话的后续回答** | 中位数 1.05 s（1.04–1.54；n=3） | 4.03, 5.54 s（n=2）；模型路由：gateway（APIM） | 1.96 s（n=1） | 中位数 12.9 s（11.17–16.42；n=3） | 中位数 2.95 s（2.83–3.92；n=3）（A 口径）；中位数 3.39 s（3.19–5.03；n=3）（D 口径）；本机沙箱内命令 0.007–0.01 s（n=20） |
+| **挂起 / 暂停与恢复就绪耗时** | 停止 中位数 7.56 s（5.97–9.31；n=3）；恢复 → Running 不挂卷 1.58–2.79 s（n=7），带 Blob 卷 中位数 2.83 s（1.61–3.02；n=3） | 未测（平台恢复 $HOME） | 挂起 → pod 消失 9.7 s（n=1）；恢复 → Ready 17.1 s，LoadBalancer 健康 26.1 s（n=1） | 未测；预览版是否支持挂起须向产品组确认 | 暂停 中位数 0.13 s（0.11–0.15；n=3）（本机 0.051–1.81 s（n=20））；恢复 → Running 中位数 0.09 s（0.08–0.11；n=3）（本机 0.086–0.62 s（n=20）） |
+| **发起恢复 → 第一个回答（不含停止）** | 中位数 14.45 s（12.44–17.22；n=3）；恢复本身另行统计的中位数 2.83 s | 未测（平台恢复 $HOME） | 34.2 s（n=1；Ready 17.1 s，LoadBalancer 健康 26.1 s） | 未测；预览版是否支持挂起须向产品组确认 | 中位数 6.48 s（4.73–12.82；n=3）；恢复本身另行统计的中位数 0.09 s |
+| **pod 或沙箱丢失 → 重新就绪** | 未测（服务托管） | 未测（平台托管） | 23.4 s（n=1）；同一 Sandbox 的状态已恢复 | 23.9 s（n=1）；未测试被删会话的连续性 | 0.1 s（n=1）；另一个存活会话在 2.61 s 内回答 |
+| **空闲策略（官方说明）** | [官网](https://learn.microsoft.com/azure/container-apps/sandboxes-overview#lifecycle-states)：可配置空闲自动挂起；可选 Memory 或 Disk 快照模式 | [官网](https://learn.microsoft.com/azure/foundry/agents/concepts/hosted-agents#sessions)：空闲超时 2–60 min（默认 15）后释放算力，保留 $HOME 和 /files；30 天不活跃后删除会话 | [官方 API](https://github.com/kubernetes-sigs/agent-sandbox/blob/v0.5.2/docs/api.md)：shutdownTime 是定时到期回收，不是按请求检测空闲；空闲回收需自行实现 | 未找到可核实的官方公开空闲策略；须向产品组确认 | [E2B 文档](https://e2b.dev/docs/sandbox)：按沙箱设置超时（默认 5 min），支持显式 `beta_pause` / `connect` |
+| **容量** | 无服务器；配额按并发核数计（文档） | 平台托管，按会话 | 你的 Kata 节点池 | 单个 Standard_D4s_v5 节点观察到最多 5 个会话；3 个节点共 12 个；`500 session_creation_failed`、`429 aks_quota_exceeded` | 4 并发 4/4、8 并发 8/8 在 1 台 Standard_D4ds_v7 VM 上全部成功（共 9 个并发 Firecracker micro-VM） |
+| **本次路径部署耗时** | 146.6 s（sandbox group、VNet 连接、磁盘镜像、卷、沙箱） | 161 s（`azd deploy`；模型路由：gateway（APIM）） | 812.9 s（准备脚本、私有链接、apply） | 854 s（角色、`azd provision`、`azd deploy`；作者控制台记录，原始输出未保留） | 177 s（Docker Engine 33.0 s + E2B Compose 与 base 模板 144 s） |
 
 **本地配置与观察，不是官网空闲策略：** A 本次使用 Memory 模式，自动挂起设置为 900 s。D 最早的 pod 在创建至少 87 min 后仍为 Running；这是 pod 的年龄，不是空闲时长或回收超时。
 <!-- END GENERATED: comparison -->
 
 值得注意的几点：
-- A 的创建耗时主要花在私有 Blob 卷上：只加镜像、VNet 或端口时是 <!--v:a.attr.small.range-->1.6–2.7<!--/v--> s，加上卷之后升到 <!--v:a.attr.vnetvolume.range-->15.79–25.12<!--/v--> s。只有在第一个回答不依赖已保存状态时，才适合先启动、后挂卷。
+- **把纯沙箱创建与外挂私有 Blob 卷拆开后，A 的真实速度非常清楚：** 不挂私有 Blob 卷时，A 创建自定义镜像沙箱的中位数仅 <!--v:a.attr.image.median-->2.31<!--/v--> s（只加镜像、VNet 或端口为 <!--v:a.attr.small.range-->1.6–2.7<!--/v--> s），对应的无卷冷启动首答合成中位数约 <!--v:a.cold_no_volume.value-->6.19<!--/v--> s（`<!--v:a.attr.image.median-->2.31<!--/v-->` s + `<!--v:a.first_answer.median-->3.88<!--/v-->` s），且同会话后续回答中位数 <!--v:a.warm.median-->1.05<!--/v--> s 是五条路径中最快的。挂载私有 Blob 卷额外增加了 +<!--v:a.blob_mount_overhead.value-->21.94<!--/v--> s 中位数（归因测试中升至 <!--v:a.attr.vnetvolume.range-->15.79–25.12<!--/v--> s，完整 agent 测试中为 <!--v:a.create.median-->24.25<!--/v--> s）。由于 A 原生支持 `Memory` 内存快照（不像 C 挂起会删除 pod），A 仅为了跨挂起保留会话状态时并不需要外挂 Blob 卷。
+- **E（E2B on Azure VM）在单台 VM 上实现了 100 ms 以内的 Firecracker 创建与快照唤醒：** 沙箱创建跨网中位数为 <!--v:e.create.median-->0.07<!--/v--> s（本机 20 次 <!--v:e.bench20.create.range-->0.051–0.089<!--/v--> s），恢复中位数为 <!--v:e.resume.median-->0.09<!--/v--> s（本机 <!--v:e.bench20.resume.range-->0.086–0.62<!--/v--> s），单台 `Standard_D4ds_v7` VM 上 4/4 和 8/8 并发全部成功。你需要自己维护 VM 操作系统、Docker Compose 栈、网络安全规则与扩缩容。
 - D 的冷启动不只是 pod 启动：会话 pod 在 <!--v:d.pod_ready.range-->8–10<!--/v--> s 内就绪，端到端范围却是 <!--v:d.cold.range-->23.53–26.7<!--/v--> s；同一台笔记本直接调用同一个模型的中位数是 <!--v:d.model_direct.median-->2.69<!--/v--> s（low reasoning effort）。该直连基线不是与 agent 配置完全匹配的基准测试。没有打点的剩余时间只能统称为端点、会话和 agent 链路，不能当成已测出的网关内部耗时。
 - 在本次观察到的 D 预览 build 里，应保守地按“开过的会话数”而不只是“正在执行的请求数”规划容量；pod 年龄的观察不能证明空闲回收超时。
 
-**每次实测。** 按 A→B→C→D 分组，同一路径内按日期从早到晚排列，与 [VALIDATION_CN.md](VALIDATION_CN.md) 的顺序一致；该页记录每次实测的输入、过程、结果和边界：
+**每次实测。** 按 A→B→C→D→E 分组，同一路径内按日期从早到晚排列，与 [VALIDATION_CN.md](VALIDATION_CN.md) 的顺序一致；该页记录每次实测的输入、过程、结果和边界：
 
 <!-- BEGIN GENERATED: runs -->
 | 实测 | 路径 | 场景 | 结果 |
@@ -302,13 +325,16 @@ A 的冷启动和恢复到回答采用分段相加，不是客户端连续端到
 | `d-2026-09-29-placement` | D | 会话跑在哪里 | 加 NSG 规则 `Allow-AzureCloud-FoundryRouter-443` 后，每个会话 pod 都是 `kata-vm-isolation`，跑在你的节点池上 |
 | `d-2026-09-29-perf` | D | 冷启动、后续、4 和 8 并发 | 冷启动 25.49 s、后续 12.9 s（中位数）；4 并发 0/4、8 并发 2/8 回答（节点池已满） |
 | `d-2026-09-29-recovery` | D | 删除一个会话 pod | 23.9 s 后替代 pod 就绪；另一个存活会话在 14.8 s 内回答；未测试被删会话的连续性 |
+| `e-2026-10-14-agent` | E | Prompt Agent + E2B，跑 3 次 + 20 次微基准 | 创建 0.07 s（本机 0.051–0.089 s）、冷启动 4.26 s、后续 2.95 s、恢复到回答 6.48 s（中位数）；3/3 次 vmm 为 `firecracker`；历史持续增长 3/3 |
+| `e-2026-10-14-perf` | E | 冷启动、后续、4 和 8 并发、沙箱替换 | 冷启动 3.6 s、后续 3.39 s（中位数）；4 并发 4/4、8 并发 8/8 回答；0.1 s 后替代沙箱就绪 |
 <!-- END GENERATED: runs -->
 
 **边界。**
-- 只测了一个区域（East US 2）和一个客户端位置。A 的完整 agent 时延 n=3；B 和 C 各是一轮端到端实测；D 是一轮压测，其中镜像已缓存的冷启动 n=5、后续回答 n=3，会话落地和恢复各一次。在依赖某个数字之前，请按 VALIDATION_CN 中的在线测量命令重新测。
-- 这些是实施过程中的观察，不是产品基准测试，也不是 SLA。文档说 A 可以从预热池实现亚秒级启动；我们带私有 Blob 卷的完整配置没有达到。
+- 只测了一个区域（East US 2）。A 的完整 agent 时延 n=3；B 和 C 各是一轮端到端实测；D 是一轮压测，其中镜像已缓存的冷启动 n=5、后续回答 n=3，会话落地和恢复各一次；E 是在单台 `Standard_D4ds_v7` VM 上的一轮压测：A 口径 n=3，D 口径冷启动 n=5、后续回答 n=3，并发 4 和 8，以及本机微基准 n=20。在依赖某个数字之前，请按 VALIDATION_CN 中的在线测量命令重新测。
+- 这些是实施过程中的观察，不是产品基准测试，也不是 SLA。文档说 A 可以从预热池实现亚秒级启动；我们带私有 Blob 卷的完整配置没有达到，而不带卷的仅镜像创建中位数为 <!--v:a.attr.image.median-->2.31<!--/v--> s。
 - D 是私有预览，它的行为（会话落地、空闲回收、各项限制）可能变化，接入需要产品组的示例和开通。
-- 没有测的：B 的恢复，A 和 B 的 pod 或宿主机丢失，由 Foundry 治理的 agent 按任务调用 ACA 沙箱（微软在 GA 后介绍的模式），以及 E2B 或其他第三方沙箱。
-- 成本：只给 D 的保底费用算了价：两个 `Standard_D4s_v5` 节点加 AKS Standard 层，按 East US 2 零售价为 <!--v:d.cost_floor.value-->0.484<!--/v--> USD/h。这不是三个 Kata 节点压测池的费用；请按你自己的价格核算。
+- 没有测的：B 的恢复，A 和 B 的 pod 或宿主机丢失，由 Foundry 治理的 agent 按任务调用 ACA 沙箱（微软在 GA 后介绍的模式），以及多节点 E2B 集群。
+- 成本：D 的两节点保底费用为两个 `Standard_D4s_v5` 节点加 AKS Standard 层 <!--v:d.cost_floor.value-->0.484<!--/v--> USD/h；E 的单 VM 保底费用为一台 `Standard_D4ds_v7` VM、一个 Standard 静态公网 IP 加一块 50 GB Premium SSD P6 磁盘，按 East US 2 零售价为 <!--v:e.cost_floor.value-->0.344<!--/v--> USD/h。请按你自己的价格核算。
 
+**仓库目录。** [`tools/`](tools/) 部署、测量和检查工具 · [`evidence/claims.json`](evidence/claims.json) A–E
 **仓库目录。** [`tools/`](tools/) 部署、测量和检查工具 · [`evidence/claims.json`](evidence/claims.json) A–D canonical 声明 · [`evidence/`](evidence/) 脱敏后的实测记录和 `measurements.json` · [`images/`](images/) 图和图标台账 · [`config/`](config/) 配置模板 · [`tests/`](tests/) 离线测试（`python -m pytest -q`，CI 每次推送都会运行）。

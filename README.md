@@ -1,33 +1,33 @@
-# Four Ways to Host an Agent Sandbox on Azure: ACA Sandboxes, Foundry Hosted Agent, AKS + agent-sandbox, BYO-AKS
+# Five Ways to Host an Agent Sandbox on Azure: ACA Sandboxes, Foundry Hosted Agent, AKS + agent-sandbox, BYO-AKS, E2B on Azure VM
 
-[![Paths](https://img.shields.io/badge/paths-A%20%C2%B7%20B%20%C2%B7%20C%20%C2%B7%20D-0078D4)](#purpose)
-[![Measured](https://img.shields.io/badge/measured-East%20US%202%2C%202026--09--22%20to%2010--09-0078D4)](#results)
-[![Docs CI](https://github.com/david-xinyuwei/david-share/actions/workflows/agent-sandbox-hosting-ci.yml/badge.svg)](https://github.com/david-xinyuwei/david-share/actions/workflows/agent-sandbox-hosting-ci.yml)
+[![Paths](https://img.shields.io/badge/paths-A%20%C2%B7%20B%20%C2%B7%20C%20%C2%B7%20D%20%C2%B7%20E-0078D4)](#purpose)
+[![Measured](https://img.shields.io/badge/measured-East%20US%202%2C%202026--09--22%20to%2010--14-0078D4)](#results)
+[![Docs CI](https://github.com/xinyuwei-david/Azure-Agent-Sandbox-Hosting/actions/workflows/docs-ci.yml/badge.svg)](https://github.com/xinyuwei-david/Azure-Agent-Sandbox-Hosting/actions/workflows/docs-ci.yml)
 
 Author: Xinyu Wei · [中文](README_CN.md)
 
 ## Purpose
 
-You want each agent session to run in its own micro-VM on Azure, and you have to pick who runs that micro-VM and its lifecycle: a service, Foundry, or you on your own AKS nodes. The four paths make different trade-offs, and their seconds are hard to compare from product pages alone. This repository applies one comparable stateful interaction contract to all four paths, gives the steps to reproduce each one, and shows what we measured. A and C share the workshop reflection agent; B uses its distinct Agent Framework agent with ResponsesHostServer; D uses the product group's private-preview sample, so this is not an identical-container benchmark:
+You want each agent session to run in its own micro-VM on Azure, and you have to pick who runs that micro-VM and its lifecycle: a service, Foundry, or you on your own AKS nodes or Azure VM. The five paths make different trade-offs, and their seconds are hard to compare from product pages alone—especially when sandbox boot, private storage volume mounts, and model turns are lumped into one number. This repository applies one comparable stateful interaction contract to all five paths, breaks each stage down separately, gives the steps to reproduce each path, and shows what we measured. A and C share the workshop reflection agent; B uses its distinct Agent Framework agent with ResponsesHostServer; D uses the product group's private-preview sample; E uses a Foundry Prompt Agent calling an E2B Firecracker sandbox tool on an Azure VM, so this is not an identical-container benchmark:
 
-| Question | A · ACA Sandboxes | B · Foundry hosted agent | C · AKS + agent-sandbox | D · BYO-AKS |
-|---|---|---|---|---|
-| Status | GA (2026-09-23) | GA (2026-06) | Pod Sandboxing GA (2025-11-18); agent-sandbox v0.5.2 is open source | **Private preview** |
-| Who runs the session lifecycle | The ACA service | Foundry | You: controller, gateway, idle sweeper | Foundry, on your cluster |
-| Where the session's micro-VM runs | Service-managed compute | Microsoft-managed compute | Your Kata node pool | Your Kata node pool |
-| Suspend with memory snapshot | Yes | No: idle releases compute, `$HOME` and `/files` are restored | No memory snapshot: you patch `operatingMode`; the pod goes, file state comes back from Blob | Not exercised; confirm preview suspend support with the product group |
-| Selectable size / node SKU (docs) | XS: 0.25 vCPU / 0.5 GB<br>S: 0.5 vCPU / 1 GB<br>M (default): 1 vCPU / 2 GB<br>L: 2 vCPU / 4 GB<br>XL: 4 vCPU / 8 GB | 0.5 vCPU / 1 GiB<br>1 vCPU / 2 GiB<br>2 vCPU / 4 GiB<br>No VM SKU to choose | Kata-compatible Gen2 VM SKUs, such as the Dsv3 series; Azure Linux and nested virtualization required | Kata node SKUs within the approved preview requirements; confirm the selectable list with the product group |
-| Choose it when | You want per-user micro-VMs, snapshots and no cluster | You want Foundry to run everything and its limits do not bite | You must own the node, the network and the control plane | You need Foundry's agent platform **and** sessions on nodes you own |
+| Question | A · ACA Sandboxes | B · Foundry hosted agent | C · AKS + agent-sandbox | D · BYO-AKS | E · E2B on Azure VM |
+|---|---|---|---|---|---|
+| Status | GA (2026-09-23) | GA (2026-06) | Pod Sandboxing GA (2025-11-18); agent-sandbox v0.5.2 is open source | **Private preview** | E2B Embed open source (`588e5b9`) on Azure Gen2 VM |
+| Who runs the session lifecycle | The ACA service | Foundry | You: controller, gateway, idle sweeper | Foundry, on your cluster | You: E2B orchestrator on your VM, called as a Foundry agent tool |
+| Where the session's micro-VM runs | Service-managed compute | Microsoft-managed compute | Your Kata node pool | Your Kata node pool | Your Azure VM with nested virtualization (`/dev/kvm`) |
+| Suspend with memory snapshot | Yes | No: idle releases compute, `$HOME` and `/files` are restored | No memory snapshot: you patch `operatingMode`; the pod goes, file state comes back from Blob | Not exercised; confirm preview suspend support with the product group | Yes: `beta_pause` saves Firecracker memory and disk (`vm_state` + `mem_file`) |
+| Selectable size / node SKU (docs) | XS: 0.25 vCPU / 0.5 GB<br>S: 0.5 vCPU / 1 GB<br>M (default): 1 vCPU / 2 GB<br>L: 2 vCPU / 4 GB<br>XL: 4 vCPU / 8 GB | 0.5 vCPU / 1 GiB<br>1 vCPU / 2 GiB<br>2 vCPU / 4 GiB<br>No VM SKU to choose | Kata-compatible Gen2 VM SKUs, such as the Dsv3 series; Azure Linux and nested virtualization required | Kata node SKUs within the approved preview requirements; confirm the selectable list with the product group | Gen2 VM SKUs with nested virtualization, such as `Standard_D4ds_v7`; E2B `base` template defaults to 2 vCPU / 512 MB |
+| Choose it when | You want per-user micro-VMs, snapshots and no cluster | You want Foundry to run everything and its limits do not bite | You must own the node, the network and the control plane | You need Foundry's agent platform **and** sessions on nodes you own | You want sub-100 ms Firecracker creation and memory snapshots on a VM you own, called as a Foundry agent tool |
 
-Product capabilities come from Microsoft Learn and status from the official announcements linked below; measured claims come from our runs; the last row is our selection guidance. Start with B for a general managed enterprise agent when its limits fit. For a long-running, per-user workload that needs memory snapshots without a cluster, start with A. Use C or D only when owning the execution nodes is non-negotiable; choose D when Foundry must still run the agent platform.
+Product capabilities come from Microsoft Learn and status from the official announcements linked below; measured claims come from our runs; the last row is our selection guidance. Start with B for a general managed enterprise agent when its limits fit. For a long-running, per-user workload that needs memory snapshots without a cluster, start with A. Use C, D or E when owning the execution nodes is non-negotiable; choose D when Foundry must run the session pods on your AKS cluster, or E when a Foundry Prompt Agent calls self-hosted Firecracker sandboxes on a single Azure VM.
 
 The selectable row separates [A's sandbox resource tiers](https://learn.microsoft.com/azure/container-apps/sandboxes-overview#resource-tiers), [B's sandbox sizes](https://learn.microsoft.com/azure/foundry/agents/concepts/hosted-agents#sandbox-sizes), and [C/D's node VM SKUs](https://learn.microsoft.com/azure/aks/use-pod-sandboxing). A node SKU is not a per-session allocation; Kata pod requests, limits and overhead also constrain each session. Node availability and quota vary by region and subscription, and D has additional preview requirements.
 
 Status sources: [A GA announcement](https://techcommunity.microsoft.com/blog/appsonazureblog/azure-container-apps-sandboxes-now-generally-available/4559125), [B GA announcement](https://azure.microsoft.com/updates?id=563596), [C Pod Sandboxing GA](https://azure.microsoft.com/updates?id=526237); agent-sandbox itself is an open-source project, not an Azure service. For C/D, [Kata provides compute isolation only](https://learn.microsoft.com/azure/aks/concepts-pod-sandboxing), not isolation of the control plane, storage/data paths or cluster-admin actions.
 
-<img src="images/architecture-en.png" width="900" alt="Four columns A to D. Each shows the client entry, the Microsoft-managed zone and your subscription. A: ACA Sandboxes service and a sandbox micro-VM, with sandbox group, registry and Blob volume in your subscription. B: Foundry Agent Service and a per-session sandbox, with project and Application Insights in your subscription. C: AKS control plane, then controller, Kata pod VM, Kata node pool and Blob PVC in your subscription. D: Foundry Agent Service, then subnet NSG, foundry-system, Kata pod VM per session and registry and storage in your subscription.">
+<img src="images/architecture-en.png" width="900" alt="Five columns A to E. Each shows the client entry, the Microsoft-managed zone and your subscription. A: ACA Sandboxes service and a sandbox micro-VM, with sandbox group, registry and Blob volume in your subscription. B: Foundry Agent Service and a per-session sandbox, with project and Application Insights in your subscription. C: AKS control plane, then controller, Kata pod VM, Kata node pool and Blob PVC in your subscription. D: Foundry Agent Service, then subnet NSG, foundry-system, Kata pod VM per session and registry and storage in your subscription. E: Foundry Agent Service, then Azure VM with E2B Embed Compose stack, Firecracker micro-VM per sandbox and local SSD in your subscription.">
 
-What the figure shows: who owns each component and where the micro-VM boundary sits. A, C and D placement comes from our read-backs; B's VM-isolated boundary comes from Learn. It does not show networking detail, identity flows or the model gateway.
+What the figure shows: who owns each component and where the micro-VM boundary sits. A, C, D and E placement comes from our read-backs; B's VM-isolated boundary comes from Learn. It does not show networking detail, identity flows or the model gateway.
 
 Words used in the results:
 
@@ -36,8 +36,8 @@ Words used in the results:
 | Cold | A new session or sandbox until its first answer arrives |
 | Warm | A follow-up turn in the same running session |
 | Resume | An already suspended session: resume request → first answer; stop and idle waiting are excluded |
-| Pod lost | Delete the session's pod; Kubernetes creates it again |
-| Micro-VM | A lightweight VM with its own guest kernel per sandbox, session or pod (Kata Containers on AKS; Cloud Hypervisor read back inside ACA) |
+| Pod lost | Delete the session's pod or sandbox; Kubernetes or the caller creates a replacement |
+| Micro-VM | A lightweight VM with its own guest kernel per sandbox, session or pod (Kata Containers on AKS; Cloud Hypervisor read back inside ACA; Firecracker on KVM in E2B) |
 
 ## Steps
 
@@ -53,17 +53,17 @@ Words used in the results:
 | 4 | A | Create the sandbox group and deploy the agent sandbox | workshop `module-04` + `tools/aca_sandbox.py` |
 | 5 | B | Deploy the hosted agent and invoke it | workshop `module-02` |
 | 6 | D | Bind an existing AKS, deploy and invoke the private-preview agent | product-group sample |
+| 7 | E | Deploy E2B Embed on an Azure Gen2 VM and invoke it from a Foundry Prompt Agent | `e2b-dev/runtime` |
 
-**A = ACA Sandboxes, B = Foundry hosted agent, C = AKS + agent-sandbox, D = BYO-AKS**. Upstream calls module-02 Solution A, module-03 Solution B and module-04 Solution C. Use module numbers when reading it. Run only the path you need: B needs steps 1–2; the full A example reuses the image and network created in step 3. ACA itself does not require AKS. D uses an existing cluster and its own approved sample, not an automatically created cluster from this page.
+**A = ACA Sandboxes, B = Foundry hosted agent, C = AKS + agent-sandbox, D = BYO-AKS, E = E2B on Azure VM**. Upstream calls module-02 Solution A, module-03 Solution B and module-04 Solution C. Use module numbers when reading it. Run only the path you need: B needs steps 1–2; the full A example reuses the image and network created in step 3. ACA itself does not require AKS. D uses an existing cluster and its own approved sample, not an automatically created cluster from this page. E runs the open-source E2B Embed Docker Compose stack on a single nested-virtualization Azure VM.
 
 **Prerequisites.** Bash, Git, curl, Python 3.10+ with the venv module (on Ubuntu/Debian install `python3-venv`), Azure CLI 2.80+, kubectl and azd 1.34+; install the Foundry extension with `azd ext install microsoft.foundry`. You need subscription Owner, or Contributor plus Role Based Access Control Administrator, and model quota in your selected region. For A, your identity also needs the `Container Apps SandboxGroup Data Owner` role ([Learn](https://learn.microsoft.com/azure/container-apps/sandboxes-overview#prerequisites)); the workshop's `sandbox-deploy.sh` assigns it when it can resolve your signed-in user and otherwise only prints a warning. Use a non-production subscription. For C, provide your actual public egress CIDR; this HTTP workshop app is not a production HTTPS/login deployment.
 
 **1. Clone and configure.** Clone into new directories, then edit `.env`: set `SUBSCRIPTION_ID`, `LOCATION` and `RESOURCE_GROUP`; set `C_ALLOW_CIDR` if using C. Leave `SN` until step 2.
 
 ```bash
-git clone --filter=blob:none --sparse --depth=1 https://github.com/david-xinyuwei/david-share.git
-git -C david-share sparse-checkout set Agents/Azure-Agent-Sandbox-Hosting
-cd david-share/Agents/Azure-Agent-Sandbox-Hosting
+git clone --filter=blob:none https://github.com/xinyuwei-david/Azure-Agent-Sandbox-Hosting.git
+cd Azure-Agent-Sandbox-Hosting
 export HOSTING_REPO="$PWD"
 git clone https://github.com/oxcp/ainotes.git "$HOME/ainotes"
 git -C "$HOME/ainotes" checkout 905f2c2
@@ -221,6 +221,18 @@ azd ai agent show
 cd "$HOSTING_REPO"
 ```
 
+**7. E — Deploy E2B Embed on an Azure VM.** On an Ubuntu 24.04 LTS Gen2 VM that exposes `/dev/kvm` (such as `Standard_D4ds_v7`) and restricts the E2B ports to your client CIDR in the subnet NSG, clone `e2b-dev/runtime`, start the Compose stack, and verify the E2B health endpoint:
+
+```bash
+git clone https://github.com/e2b-dev/runtime.git "$HOME/e2b-runtime"
+git -C "$HOME/e2b-runtime" checkout 588e5b9500b0987bc5a700d91483b03f0ae7d2a2
+(cd "$HOME/e2b-runtime" && docker compose up -d --wait)
+curl --fail-with-body --show-error --max-time 30 "$E2B_API_URL/health"
+cd "$HOSTING_REPO"
+```
+
+Success: `/health` returns HTTP 200 and the `base` template finishes building in the `init-seed` container.
+
 **Done.** The selected path has an actual answering application and its usable entry, not merely a completed measurement command. Optional cold/warm tests, isolation checks and historical-number replay are in [VALIDATION.md](VALIDATION.md#tests-and-offline-checks).
 
 **Offboard only after explicit owner approval; not part of deployment.** Each command below is its own block: run only the ones for resources you intend to remove. Stopping AKS saves compute charges, not all retained-resource charges.
@@ -243,6 +255,12 @@ Stop the D cluster:
 az aks stop -g "$BYOAKS_RESOURCE_GROUP" -n "$BYOAKS_CLUSTER"
 ```
 
+Deallocate the E VM:
+
+```bash
+az vm deallocate -g "$E2B_RESOURCE_GROUP" -n "$E2B_VM_NAME"
+```
+
 Delete the resource group. This removes the shared foundation and A/B/C, and `az` asks you to confirm first:
 
 ```bash
@@ -251,44 +269,49 @@ az group delete -n "$RESOURCE_GROUP" --no-wait
 
 ## Results
 
-**Where each path's micro-VM runs.** Measured read-backs for A, C and D, plus Learn's documented boundary for B:
+**Where each path's micro-VM runs.** Measured read-backs for A, C, D and E, plus Learn's documented boundary for B:
 
-| | A · ACA Sandboxes | B · Foundry hosted agent | C · AKS + agent-sandbox | D · BYO-AKS |
-|---|---|---|---|---|
-| Boundary | One micro-VM per sandbox | Per-session VM-isolated sandbox (Learn) | One Kata pod VM per Sandbox | One Kata pod VM per session |
-| VMM and hypervisor | `vmm_type` <!--v:a.vmm.value-->cloudhypervisor<!--/v--> from the API; the docs name no hypervisor | Not published; only VM isolation is documented | Cloud Hypervisor on Microsoft Hyper-V (Learn) | Same as C |
-| Kernel read | Guest <!--v:a.isolation.guest_kernel-->6.12.8+<!--/v--> | Not exposed; not read back | Pod <!--v:c.isolation.guest_kernel-->6.6.137.mshv1-1.azl3<!--/v-->, runc pod <!--v:c.isolation.system_node_kernel-->6.8.0-1067-azure<!--/v--> | Kata pool nodes <!--v:d.node_kernel.value-->6.6.137.mshv2-2.azl3<!--/v-->; not read inside a session pod |
-| Who owns the node | Microsoft | Microsoft | You | You |
+| | A · ACA Sandboxes | B · Foundry hosted agent | C · AKS + agent-sandbox | D · BYO-AKS | E · E2B on Azure VM |
+|---|---|---|---|---|---|
+| Boundary | One micro-VM per sandbox | Per-session VM-isolated sandbox (Learn) | One Kata pod VM per Sandbox | One Kata pod VM per session | One Firecracker micro-VM per sandbox |
+| VMM and hypervisor | `vmm_type` <!--v:a.vmm.value-->cloudhypervisor<!--/v--> from the API; the docs name no hypervisor | Not published; only VM isolation is documented | Cloud Hypervisor on Microsoft Hyper-V (Learn) | Same as C | `vmm_type` <!--v:e.vmm.value-->firecracker<!--/v--> (<!--v:e.isolation.firecracker_version-->v1.14-0.2.0<!--/v-->) on Linux KVM (`/dev/kvm`) |
+| Kernel read | Guest <!--v:a.isolation.guest_kernel-->6.12.8+<!--/v--> | Not exposed; not read back | Pod <!--v:c.isolation.guest_kernel-->6.6.137.mshv1-1.azl3<!--/v-->, runc pod <!--v:c.isolation.system_node_kernel-->6.8.0-1067-azure<!--/v--> | Kata pool nodes <!--v:d.node_kernel.value-->6.6.137.mshv2-2.azl3<!--/v-->; not read inside a session pod | Guest <!--v:e.isolation.guest_kernel-->6.1.177+<!--/v-->, host VM <!--v:e.isolation.host_kernel-->6.17.0-1022-azure<!--/v--> |
+| Who owns the node | Microsoft | Microsoft | You | You | You |
 
-B's per-session VM-isolated boundary is a `SOURCE_FACT`, not a local VMM or kernel read-back. C and D use the same Kata runtime class, so isolation does not separate them: who runs the platform does.
+B's per-session VM-isolated boundary is a `SOURCE_FACT`, not a local VMM or kernel read-back. C and D use the same Kata runtime class, so isolation does not separate them: who runs the platform does. E runs Firecracker directly on `/dev/kvm` inside your Azure Gen2 VM.
 
-**The seconds.** A is the median of three runs on 2026-10-09; B and C are single runs on 2026-09-27; D is one benchmark campaign on 2026-09-29. A and C use the workshop reflection agent; B uses its Agent Framework agent with ResponsesHostServer; D uses the private-preview sample. All use the same model and a stateful two-turn interaction, but not the same container. B and D were called through the Foundry endpoint from a laptop in China (Azure round trip <!--v:d.client_rtt.range-->320–800<!--/v--> ms); A's answers were timed inside the sandbox and C's at its LoadBalancer. Compare within a row as a field report, not as a controlled product benchmark:
+**The seconds, broken down by stage.** Earlier summaries combined bare sandbox startup, private Azure Blob volume mounts, and the first agent turn into one cold-start number—making A look slow because its full workshop config attached a private Blob volume (+<!--v:a.blob_mount_overhead.value-->21.94<!--/v--> s), even though A natively supports `Memory` snapshots and does not need an external Blob volume to keep session state across suspend. Below, each stage is separated. A is the median of three runs on 2026-10-09 plus its attribution matrix; B and C are single runs on 2026-09-27; D is one benchmark campaign on 2026-09-29; E is one benchmark campaign on 2026-10-14. A and C use the workshop reflection agent; B uses its Agent Framework agent with ResponsesHostServer; D uses the private-preview sample; E uses a Foundry Prompt Agent calling an E2B sandbox tool. All use the same model and a stateful interaction, but not the same container. B and D were called through the Foundry endpoint from a laptop in China (Azure round trip <!--v:d.client_rtt.range-->320–800<!--/v--> ms); E was called from a workstation in East US 2; A's answers were timed inside the sandbox and C's at its LoadBalancer. Compare within a row as a field report, not as a controlled product benchmark:
 
-A's cold and resume-to-answer numbers are component sums, not a single end-to-end client stopwatch: SDK create or resume wall time plus the answer timed inside the sandbox. C's cold number is likewise apply-to-Ready plus first-answer time. Resume starts after suspension has finished; stop and idle waiting are excluded. B's rows use the gateway (APIM) model route; its direct-route results are separate in VALIDATION.
+A's and E's A-protocol cold and resume-to-answer numbers are component sums, not a single end-to-end client stopwatch: SDK create or resume wall time plus the answer timed inside the sandbox (A) or Prompt Agent turn (E). C's cold number is likewise apply-to-Ready plus first-answer time. Resume starts after suspension has finished; stop and idle waiting are excluded. B's follow-up row uses the gateway (APIM) model route; its direct-route results are separate in VALIDATION.
 
-**Do not rank the four products by these seconds.** Clock locations, prompts, reasoning settings, output token counts, image cache and sample sizes were not uniformly controlled or fully recorded across paths. The same model name does not make these a matched latency benchmark. Numerical sanity checks can reject invalid timings; they cannot establish product performance or fill missing instrumentation.
+**Do not rank the five products by these seconds.** Clock locations, prompts, reasoning settings, output token counts, image cache and sample sizes were not uniformly controlled or fully recorded across paths. The same model name does not make these a matched latency benchmark. Numerical sanity checks can reject invalid timings; they cannot establish product performance or fill missing instrumentation.
 
 <!-- BEGIN GENERATED: comparison -->
-| Observed or documented | A · ACA Sandboxes | B · Foundry hosted agent | C · AKS + agent-sandbox | D · BYO-AKS |
-|---|---|---|---|---|
-| **New session → first answer** | 28.0 s median (27.07–50.41; n=3); SDK create + answer inside sandbox | 9.43 s (n=1, via the Foundry endpoint; model route: gateway (APIM)) | 57.65 s (n=1; apply → Ready 44.9 s + answer 12.75 s) | 25.49 s median (23.53–26.7; n=5), via the Foundry endpoint |
-| **Follow-up turn, same session** | 1.05 s median (1.04–1.54; n=3) | 4.03, 5.54 s (n=2); model route: gateway (APIM) | 1.96 s (n=1) | 12.9 s median (11.17–16.42; n=3) |
-| **Sandbox or pod until ready** | 24.25 s median (24.12–44.86; n=3), create → Running | not visible (managed) | 44.9 s (n=1), apply → Ready | 8–10 s (n=6) with the image cached; 25 s on a fresh node (n=2) |
-| **Resume request → first answer (stop excluded)** | 14.45 s median (12.44–17.22; n=3); separately reported resume-only median 2.83 s | not exercised (the platform restores $HOME) | 34.2 s (n=1; Ready 17.1 s, LoadBalancer healthy 26.1 s) | Not exercised; confirm preview suspend support with the product group |
-| **Pod lost → ready again** | not exercised (service-managed) | not exercised (managed) | 23.4 s (n=1); same Sandbox state restored | 23.9 s (n=1); deleted session continuity not tested |
-| **Idle policy (official docs)** | [Docs](https://learn.microsoft.com/azure/container-apps/sandboxes-overview#lifecycle-states): configurable idle auto-suspend; Memory or Disk snapshot mode | [Docs](https://learn.microsoft.com/azure/foundry/agents/concepts/hosted-agents#sessions): 2–60 min idle timeout (default 15); compute released, $HOME and /files persisted; session deleted after 30 days of inactivity | [Official API](https://github.com/kubernetes-sigs/agent-sandbox/blob/v0.5.2/docs/api.md): shutdownTime is scheduled expiry, not request-idle detection; implement request-idle recycling yourself | No verified public official idle policy; confirm with the product group |
-| **Capacity** | serverless; quota is concurrent cores (docs) | managed, per session | your Kata node pool | observed at most 5 per Standard_D4s_v5 node; 12 on 3 nodes; `500 session_creation_failed`, `429 aks_quota_exceeded` |
-| **Path setup in our run** | 146.6 s (sandbox group, VNet connection, disk image, volume, sandbox) | 161 s (`azd deploy`; model route: gateway (APIM)) | 812.9 s (prepare script, private link, apply) | 854 s (roles, `azd provision`, `azd deploy`; author's console, not kept) |
+| Observed or documented | A · ACA Sandboxes | B · Foundry hosted agent | C · AKS + agent-sandbox | D · BYO-AKS | E · E2B on Azure VM |
+|---|---|---|---|---|---|
+| **Sandbox or pod until ready (no external volume)** | 2.31 s median (1.6–2.7; n=3); with VNet 1.97–2.52 s (n=2), port 2.3–2.33 s (n=2) | not visible (managed) | not measured without PVC (suspend deletes the pod) | 8–10 s (n=6) with the image cached; 25 s on a fresh node (n=2) | 0.07 s median (0.06–0.14; n=3) across network; 0.051–0.089 s (n=20) on host |
+| **External private storage volume overhead** | +21.94 s median when mounting private Blob volume (create → Running 24.25 s median (24.12–44.86; n=3)); not needed for Memory snapshot | none (platform restores $HOME and /files) | apply → Ready with Blob PVC 44.9 s (n=1; required across suspend) | none in session pod | none (Firecracker snapshot uses local SSD) |
+| **First answer after sandbox ready** | 3.88 s median (2.82–5.55; n=3), timed inside the sandbox | included in new-session total below | 12.75 s (n=1), at the LoadBalancer | included in new-session total below | 4.12 s median (2.82–8.38; n=3) (A protocol); 3.44 s median (2.28–7.75; n=5) (D protocol) |
+| **New session → first answer (no external volume)** | 6.19 s derived median (image create 2.31 s + first answer 3.88 s) | 9.43 s (n=1, via the Foundry endpoint; model route: gateway (APIM)); 5.29 s (n=1, direct) | not applicable (requires Blob PVC to keep state) | 25.49 s median (23.53–26.7; n=5), via the Foundry endpoint | 4.26 s median (2.89–8.44; n=3) (A protocol); 3.6 s median (2.54–7.94; n=5) (D protocol) |
+| **New session → first answer (with private Blob volume)** | 28.0 s median (27.07–50.41; n=3); SDK create + answer inside sandbox | no external Blob volume mounted | 57.65 s (n=1; apply → Ready 44.9 s + answer 12.75 s) | no external Blob volume mounted | no external Blob volume mounted |
+| **Follow-up turn, same session** | 1.05 s median (1.04–1.54; n=3) | 4.03, 5.54 s (n=2); model route: gateway (APIM) | 1.96 s (n=1) | 12.9 s median (11.17–16.42; n=3) | 2.95 s median (2.83–3.92; n=3) (A protocol); 3.39 s median (3.19–5.03; n=3) (D protocol); on-host sandbox command 0.007–0.01 s (n=20) |
+| **Suspend / pause and wake until ready** | stop 7.56 s median (5.97–9.31; n=3); resume → Running 1.58–2.79 s (n=7, no volume), 2.83 s median (1.61–3.02; n=3) (with Blob volume) | not exercised (the platform restores $HOME) | suspend → pod gone 9.7 s (n=1); resume → Ready 17.1 s, LoadBalancer healthy 26.1 s (n=1) | Not exercised; confirm preview suspend support with the product group | pause 0.13 s median (0.11–0.15; n=3) (on host 0.051–1.81 s (n=20)); resume → Running 0.09 s median (0.08–0.11; n=3) (on host 0.086–0.62 s (n=20)) |
+| **Resume request → first answer (stop excluded)** | 14.45 s median (12.44–17.22; n=3); separately reported resume-only median 2.83 s | not exercised (the platform restores $HOME) | 34.2 s (n=1; Ready 17.1 s, LoadBalancer healthy 26.1 s) | Not exercised; confirm preview suspend support with the product group | 6.48 s median (4.73–12.82; n=3); separately reported resume-only median 0.09 s |
+| **Pod or sandbox lost → ready again** | not exercised (service-managed) | not exercised (managed) | 23.4 s (n=1); same Sandbox state restored | 23.9 s (n=1); deleted session continuity not tested | 0.1 s (n=1); another live session answered in 2.61 s |
+| **Idle policy (official docs)** | [Docs](https://learn.microsoft.com/azure/container-apps/sandboxes-overview#lifecycle-states): configurable idle auto-suspend; Memory or Disk snapshot mode | [Docs](https://learn.microsoft.com/azure/foundry/agents/concepts/hosted-agents#sessions): 2–60 min idle timeout (default 15); compute released, $HOME and /files persisted; session deleted after 30 days of inactivity | [Official API](https://github.com/kubernetes-sigs/agent-sandbox/blob/v0.5.2/docs/api.md): shutdownTime is scheduled expiry, not request-idle detection; implement request-idle recycling yourself | No verified public official idle policy; confirm with the product group | [E2B docs](https://e2b.dev/docs/sandbox): per-sandbox timeout (default 5 min) and explicit `beta_pause` / `connect` |
+| **Capacity** | serverless; quota is concurrent cores (docs) | managed, per session | your Kata node pool | observed at most 5 per Standard_D4s_v5 node; 12 on 3 nodes; `500 session_creation_failed`, `429 aks_quota_exceeded` | 4 at once 4/4, 8 at once 8/8 on 1 Standard_D4ds_v7 VM (9 live Firecracker micro-VMs) |
+| **Path setup in our run** | 146.6 s (sandbox group, VNet connection, disk image, volume, sandbox) | 161 s (`azd deploy`; model route: gateway (APIM)) | 812.9 s (prepare script, private link, apply) | 854 s (roles, `azd provision`, `azd deploy`; author's console, not kept) | 177 s (Docker Engine 33.0 s + E2B Compose and base template 144 s) |
 
 **Local configuration and observation, not official idle policy:** A used Memory mode with a 900 s auto-suspend setting. D's oldest pod was still Running at least 87 min after creation; this is pod age, not idle duration or a reclamation timeout.
 <!-- END GENERATED: comparison -->
 
 What stands out:
-- A's create is dominated by the private Blob volume: the image, VNet or port alone stayed at <!--v:a.attr.small.range-->1.6–2.7<!--/v--> s, the volume raised create to <!--v:a.attr.vnetvolume.range-->15.79–25.12<!--/v--> s. Starting without the volume and mounting it later is an option only when the first answer does not need saved state.
+- **Separating bare sandbox creation from external Blob volume mounting changes the picture for A:** without the private Blob volume, A created a custom-image sandbox in <!--v:a.attr.image.median-->2.31<!--/v--> s median (<!--v:a.attr.small.range-->1.6–2.7<!--/v--> s across image, VNet or port alone), giving a derived cold first answer of <!--v:a.cold_no_volume.value-->6.19<!--/v--> s (`<!--v:a.attr.image.median-->2.31<!--/v-->` s + `<!--v:a.first_answer.median-->3.88<!--/v-->` s), and A's warm follow-up of <!--v:a.warm.median-->1.05<!--/v--> s was the fastest among all five paths. Attaching the private Blob volume added +<!--v:a.blob_mount_overhead.value-->21.94<!--/v--> s median (raising create to <!--v:a.attr.vnetvolume.range-->15.79–25.12<!--/v--> s in attribution and <!--v:a.create.median-->24.25<!--/v--> s in the full agent runs). Because A has native `Memory` snapshots (unlike C, which deletes the pod on suspend), A does not need an external Blob volume merely to preserve session state across suspend.
+- **E (E2B on Azure VM) delivers sub-100 ms Firecracker creation and snapshot wake on a single VM:** sandbox creation took <!--v:e.create.median-->0.07<!--/v--> s median across the network (<!--v:e.bench20.create.range-->0.051–0.089<!--/v--> s on host across 20 runs), resume took <!--v:e.resume.median-->0.09<!--/v--> s (<!--v:e.bench20.resume.range-->0.086–0.62<!--/v--> s on host), and all 4/4 and 8/8 concurrent sessions succeeded on one `Standard_D4ds_v7` VM. You own the VM OS, Docker Compose stack, network rules and scaling.
 - D's cold time includes more than pod boot: the session pod was Ready in <!--v:d.pod_ready.range-->8–10<!--/v--> s inside a <!--v:d.cold.range-->23.53–26.7<!--/v--> s end-to-end range, and the same model called directly from the same laptop took <!--v:d.model_direct.median-->2.69<!--/v--> s (median, low reasoning effort). This direct baseline is not a matched agent-configuration benchmark. The uninstrumented remainder is the endpoint, session and agent path collectively; it is not a measured gateway component.
 - In the observed D preview build, plan capacity conservatively by sessions opened, not only requests active; the pod-age observation does not establish an idle eviction timeout.
 
-**Measured runs.** Grouped A–D, then by date from oldest to newest within each path, in the same order as [VALIDATION.md](VALIDATION.md), which records each run's input, procedure, result and boundary:
+**Measured runs.** Grouped A–E, then by date from oldest to newest within each path, in the same order as [VALIDATION.md](VALIDATION.md), which records each run's input, procedure, result and boundary:
 
 <!-- BEGIN GENERATED: runs -->
 | Run | Path | Scenario | Result |
@@ -302,13 +325,15 @@ What stands out:
 | `d-2026-09-29-placement` | D | where a session runs | every session pod `kata-vm-isolation` on your node pool after NSG rule `Allow-AzureCloud-FoundryRouter-443` |
 | `d-2026-09-29-perf` | D | cold, warm, 4 and 8 at once | cold 25.49 s, warm 12.9 s (medians); 4 at once 0/4, 8 at once 2/8 answered (pool full) |
 | `d-2026-09-29-recovery` | D | delete a session pod | replacement Ready in 23.9 s; a different live session answered in 14.8 s; deleted session continuity not tested |
+| `e-2026-10-14-agent` | E | Prompt Agent + E2B, 3 runs + 20-run microbench | create 0.07 s (on host 0.051–0.089 s), cold 4.26 s, warm 2.95 s, resume → answer 6.48 s (medians); vmm `firecracker` in 3/3; history grew 3/3 |
+| `e-2026-10-14-perf` | E | cold, warm, 4 and 8 at once, replacement | cold 3.6 s, warm 3.39 s (medians); 4 at once 4/4, 8 at once 8/8 answered; replacement Ready in 0.1 s |
 <!-- END GENERATED: runs -->
 
 **Limits.**
-- One region (East US 2) and one client location. A full-agent latency has n=3. B and C are one end-to-end run each. D is one benchmark campaign: cached-image cold n=5, warm n=3, and one placement and one recovery observation. Repeat them with the live measurement commands in VALIDATION before you rely on a number.
-- These are implementation observations, not product benchmarks or SLAs. The docs state sub-second sandbox start for A from prewarmed pools; our full specification with a private Blob volume did not get there.
+- One region (East US 2). A full-agent latency has n=3. B and C are one end-to-end run each. D is one benchmark campaign: cached-image cold n=5, warm n=3, and one placement and one recovery observation. E is one benchmark campaign on a single `Standard_D4ds_v7` VM: A-protocol n=3, D-protocol cold n=5 and warm n=3, concurrency 4 and 8, and on-host microbenchmark n=20. Repeat them with the live measurement commands in VALIDATION before you rely on a number.
+- These are implementation observations, not product benchmarks or SLAs. The docs state sub-second sandbox start for A from prewarmed pools; our full specification with a private Blob volume did not get there, whereas image-only creation took <!--v:a.attr.image.median-->2.31<!--/v--> s median.
 - D is a private preview. Its behaviour (placement, idle reclaim, limits) may change, and its onboarding needs the product group's sample and enablement.
-- Not measured: B's resume, A's and B's pod or host loss, the Foundry-governed agent calling an ACA sandbox per task (the pattern Microsoft describes since GA), and E2B or any other third-party sandbox.
-- Cost: only D's floor was priced, <!--v:d.cost_floor.value-->0.484<!--/v--> USD/h for two `Standard_D4s_v5` nodes and the AKS Standard tier at East US 2 retail prices. This is not the cost of the three-Kata-node benchmark pool; check your own prices.
+- Not measured: B's resume, A's and B's pod or host loss, the Foundry-governed agent calling an ACA sandbox per task (the pattern Microsoft describes since GA), and multi-node E2B clusters.
+- Cost: D's two-node floor is <!--v:d.cost_floor.value-->0.484<!--/v--> USD/h for two `Standard_D4s_v5` nodes and the AKS Standard tier; E's single-VM floor is <!--v:e.cost_floor.value-->0.344<!--/v--> USD/h for one `Standard_D4ds_v7` VM, one Standard static public IP and a 50 GB Premium SSD P6 disk at East US 2 retail prices. Check your own prices.
 
-**Repository.** [`tools/`](tools/) setup, measurement and checks · [`evidence/claims.json`](evidence/claims.json) canonical A–D claims · [`evidence/`](evidence/) redacted run records and `measurements.json` · [`images/`](images/) figures and icon ledger · [`config/`](config/) settings template · [`tests/`](tests/) offline tests (`python -m pytest -q`, run by CI on every push).
+**Repository.** [`tools/`](tools/) setup, measurement and checks · [`evidence/claims.json`](evidence/claims.json) canonical A–E claims · [`evidence/`](evidence/) redacted run records and `measurements.json` · [`images/`](images/) figures and icon ledger · [`config/`](config/) settings template · [`tests/`](tests/) offline tests (`python -m pytest -q`, run by CI on every push).

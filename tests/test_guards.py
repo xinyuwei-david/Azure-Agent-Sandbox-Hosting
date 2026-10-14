@@ -28,8 +28,8 @@ def test_extra_readme_section_fails():
 def test_missing_b_from_isolation_table_fails():
     p = pages()
     p["README_CN.md"] = p["README_CN.md"].replace(
-        "| | A · ACA Sandboxes | B · Foundry hosted agent | C · AKS + agent-sandbox | D · BYO-AKS |",
-        "| | A · ACA Sandboxes | C · AKS + agent-sandbox | D · BYO-AKS |",
+        "| | A · ACA Sandboxes | B · Foundry hosted agent | C · AKS + agent-sandbox | D · BYO-AKS | E · E2B on Azure VM |",
+        "| | A · ACA Sandboxes | C · AKS + agent-sandbox | D · BYO-AKS | E · E2B on Azure VM |",
         1,
     )
     assert any("A, B, C and D" in e for e in vd.check_four_path_tables(p))
@@ -38,7 +38,7 @@ def test_missing_b_from_isolation_table_fails():
 def test_same_container_claim_fails_information_alignment():
     p = pages()
     p["README.md"] = p["README.md"].replace(
-        "This repository applies one comparable stateful interaction contract to all four paths",
+        "This repository applies one comparable stateful interaction contract to all five paths",
         "This repository puts the same sample agent on all four",
         1,
     )
