@@ -1,0 +1,34 @@
+{
+  "items": [
+    {
+      "metadata": {
+        "name": "agent-node-4"
+      },
+      "status": {
+        "nodeInfo": {
+          "kernelVersion": "6.6.137.mshv2-2.azl3"
+        }
+      }
+    },
+    {
+      "metadata": {
+        "name": "agent-node-3"
+      },
+      "status": {
+        "nodeInfo": {
+          "kernelVersion": "6.6.137.mshv2-2.azl3"
+        }
+      }
+    },
+    {
+      "metadata": {
+        "name": "agent-node-2"
+      },
+      "status": {
+        "nodeInfo": {
+          "kernelVersion": "6.6.137.mshv2-2.azl3"
+        }
+      }
+    }
+  ]
+}
