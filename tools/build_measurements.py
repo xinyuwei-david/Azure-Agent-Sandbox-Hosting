@@ -207,6 +207,49 @@ def build(runs: dict[str, dict], index: dict[str, str]) -> dict:
     put("b.warm_direct", rid, "LOCAL_MEASUREMENT", stat(b["invoke_v2_direct"]["warm_seconds"]),
         "follow-up turns, direct route")
 
+    # B · 2026-10-15, explicit session lifecycle through the session API, n = 3
+    bs = runs["b-sessions-2026-10-15/sessions.json"]
+    rid = bs["run_id"]
+    br = bs["runs"]
+    if len(br) != 3:
+        raise BuildError("B session run should have 3 runs")
+    for r in br:
+        if "error" in r or r.get("deleted") is not True:
+            raise BuildError(f"B session run {r['run']}: recorded an error or did not delete its session")
+
+    def count_grew(r: dict) -> bool:
+        counts = [r[k].get("response") for k in ("warm", "resume", "warm_after_resume")]
+        return (all(isinstance(x, str) and x.isdigit() for x in counts)
+                and int(counts[0]) < int(counts[1]) < int(counts[2]))
+
+    create = [round(r["create"]["total_s"] + ((r["create"].get("wait_active") or {}).get("seconds") or 0), 3)
+              for r in br]
+    first = [r["first"]["total_s"] for r in br]
+    put("b.sess.create", rid, "LOCAL_MEASUREMENT", stat(create),
+        "POST .../endpoint/sessions until the session reads active, client wall time")
+    put("b.sess.first", rid, "LOCAL_MEASUREMENT", stat(first), "first answer on the active session, client wall time")
+    put("b.sess.first_server", rid, "LOCAL_MEASUREMENT", stat([r["first"]["server_s"] for r in br]),
+        "first answer: response completed_at minus created_at as recorded by the service (whole seconds)")
+    put("b.sess.cold", rid, "LOCAL_MEASUREMENT", stat([round(x + y, 3) for x, y in zip(create, first)]),
+        "create session until active + first answer, added per run; a sum of two client requests")
+    put("b.sess.warm", rid, "LOCAL_MEASUREMENT", stat([r["warm"]["total_s"] for r in br]),
+        "follow-up answer on the same session")
+    put("b.sess.stop", rid, "LOCAL_MEASUREMENT",
+        stat([round(r["stop"]["total_s"] + r["stop"]["wait_stopped"]["seconds"], 3) for r in br]),
+        "POST .../sessions/{id}:stop until the session reads idle")
+    put("b.sess.resume", rid, "LOCAL_MEASUREMENT", stat([r["resume"]["total_s"] for r in br]),
+        "next answer on the stopped session; the platform provisions compute and restores $HOME")
+    put("b.sess.warm_after_resume", rid, "LOCAL_MEASUREMENT", stat([r["warm_after_resume"]["total_s"] for r in br]),
+        "the answer after that")
+    put("b.sess.server", rid, "LOCAL_MEASUREMENT",
+        stat([r[k]["server_s"] for r in br for k in ("first", "warm", "resume", "warm_after_resume")]),
+        "every turn: response completed_at minus created_at as recorded by the service (whole seconds)")
+    put("b.sess.state_kept", rid, "LOCAL_MEASUREMENT",
+        {"n": len(br), "unit": "runs", "files": sum(r["marker_after_resume"]["matches"] is True for r in br),
+         "conversation": sum(count_grew(r) for r in br)},
+        "files: the file written before stop read back unchanged after resume; conversation: the question count "
+        "kept growing across stop and resume")
+
     c = runs["c-aks-agent-sandbox-2026-09-27/run.json"]
     rid = c["run_id"]
     resume = c["resume"]
@@ -395,10 +438,12 @@ def build(runs: dict[str, dict], index: dict[str, str]) -> dict:
         "Sandbox.connect wall time + first answer after resume; excludes pause and idle waiting")
     put("e.warm_after_resume", rid, "LOCAL_MEASUREMENT",
         stat([r["warm_after_resume"]["guest_s"] for r in er]), "next answer after that")
-    evmm = sorted({r["vmm_type"] for r in er})
+    eiso = ea["isolation_check"]
+    if "firecracker" not in eiso["vmm_source"]:
+        raise BuildError("E VMM read-back does not name the Firecracker process")
     put("e.vmm", rid, "LOCAL_MEASUREMENT",
-        {"n": len(er), "unit": "runs", "value": evmm[0] if len(evmm) == 1 else evmm,
-         "count": sum(r["vmm_type"] == "firecracker" for r in er)}, "VMM running the E2B sandbox")
+        {"n": 1, "unit": "read-back", "value": eiso["vmm_type"], "source": eiso["vmm_source"]},
+        "VMM process behind the E2B sandboxes in the host's process list")
     ekept = sum(r["first_after_resume"]["history_length"] > r["warm"]["history_length"] for r in er)
     put("e.state_kept", rid, "LOCAL_MEASUREMENT", {"n": len(er), "unit": "runs", "count": ekept},
         "conversation history length inside the E2B sandbox kept growing across pause and resume")
@@ -407,7 +452,6 @@ def build(runs: dict[str, dict], index: dict[str, str]) -> dict:
         {"n": 1, "unit": "s", "value": round(esetup["apt_and_docker_s"] + esetup["compose_and_template_s"], 1),
          "parts": [esetup["apt_and_docker_s"], esetup["compose_and_template_s"]]},
         "Docker Engine install + E2B Embed Compose up + base Firecracker template build")
-    eiso = ea["isolation_check"]
     put("e.isolation", rid, "LOCAL_MEASUREMENT",
         {"n": 1, "unit": "read-back", "vmm_type": eiso["vmm_type"],
          "firecracker_version": eiso["firecracker_version"],
@@ -434,8 +478,6 @@ def build(runs: dict[str, dict], index: dict[str, str]) -> dict:
         if t["http"] != 200:
             raise BuildError(f"E perf turn {t['started_utc']} was not answered")
     for t in ep["cold_turns"]:
-        if t["runtime"] != "firecracker":
-            raise BuildError("E cold sandbox without firecracker runtime")
         if t["sandbox_create_to_ready_s"] > t["wall_s"] + 0.1:
             raise BuildError("E cold sandbox create-to-Ready exceeds the paired request wall time")
     put("e.d_cold", erid, "LOCAL_MEASUREMENT", stat([t["wall_s"] for t in ep["cold_turns"]]),
@@ -460,13 +502,15 @@ def build(runs: dict[str, dict], index: dict[str, str]) -> dict:
         ok = [t["wall_s"] for t in t1 if t["http"] == 200]
         refused = [t for t in t1 if t["http"] != 200]
         put(f"e.c{n}", erid, "LOCAL_MEASUREMENT",
-            {"n": n, "unit": "sessions", "answered": len(ok), "answered_s": ok, "refused": len(refused),
-             "max_live_vms": lv["max_live_firecracker_processes"]},
+            {"n": n, "unit": "sessions", "answered": len(ok), "answered_s": ok, "refused": len(refused)},
             f"{n} new sessions at once on 1 {ep['node_sku']} VM")
+    full = [n for n in (4, 8) if m[f"e.c{n}"]["answered"] == n]
+    if not full:
+        raise BuildError("E: no at-once level was answered in full")
     put("e.capacity", erid, "LOCAL_MEASUREMENT",
-        {"n": ep["host_nodes"], "unit": "sessions",
-         "max_sessions": ep["max_concurrent_sandboxes_observed"], "node_sku": ep["node_sku"]},
-        "concurrent live Firecracker micro-VMs observed on one host VM with 0 refusals")
+        {"n": ep["host_nodes"], "unit": "sessions", "max_sessions": max(full), "node_sku": ep["node_sku"]},
+        "largest at-once level answered in full on one host VM; no live micro-VM count is published for this run "
+        "because the driver's pgrep count included its own shell (perf.json firecracker_process_count)")
     erec = ep["recovery"]
     if not erec["followup_on_live_session"]["state_preserved"] or erec["followup_on_live_session"]["answer"] != "LANTERN-7":
         raise BuildError("the live session used after E sandbox kill did not keep LANTERN-7")
@@ -475,6 +519,131 @@ def build(runs: dict[str, dict], index: dict[str, str]) -> dict:
     put("e.other_session_followup", erid, "LOCAL_MEASUREMENT",
         single(erec["followup_on_live_session"]["wall_s"]),
         "follow-up on a different live session after the sandbox kill; that session kept LANTERN-7")
+
+    def e_agent_runs(rid_: str, prefix: str, rr: list[dict], where: str) -> None:
+        if len(rr) != 3:
+            raise BuildError(f"{rid_}: expected 3 agent runs")
+        for r in rr:
+            if "error" in r or r.get("history_lengths") != [1, 2, 3, 4] or r.get("state_kept") is not True:
+                raise BuildError(f"{rid_} run {r['run']}: recorded an error or lost the sandbox history")
+            if r.get("sandbox_deleted") is not True or r.get("conversation_deleted") is not True:
+                raise BuildError(f"{rid_} run {r['run']}: left its sandbox or conversation")
+            if abs(r["create_total_s"] + r["first"]["wall_s"] - r["cold_total_s"]) > 0.011:
+                raise BuildError(f"{rid_} run {r['run']}: cold_total_s is not create + first answer")
+            if abs(r["resume_total_s"] + r["first_after_resume"]["wall_s"] - r["recover_total_s"]) > 0.011:
+                raise BuildError(f"{rid_} run {r['run']}: recover_total_s is not resume + answer")
+        for key, pick, what in (
+                ("create", lambda r: r["create_total_s"], "Sandbox.create until it returns"),
+                ("first", lambda r: r["first"]["wall_s"], "first Prompt Agent turn"),
+                ("cold", lambda r: r["cold_total_s"], "create + first Prompt Agent turn, added per run"),
+                ("warm", lambda r: r["warm"]["wall_s"], "follow-up turn"),
+                ("pause", lambda r: r["stop_total_s"], "beta_pause until it returns"),
+                ("resume", lambda r: r["resume_total_s"], "Sandbox.connect until it returns"),
+                ("first_after_resume", lambda r: r["first_after_resume"]["wall_s"], "first turn after resume"),
+                ("recover", lambda r: r["recover_total_s"], "connect + first turn after resume, added per run")):
+            put(f"{prefix}.{key}", rid_, "LOCAL_MEASUREMENT", stat([pick(r) for r in rr]), f"{what}, {where}")
+        put(f"{prefix}.state_kept", rid_, "LOCAL_MEASUREMENT", {"n": len(rr), "unit": "runs", "count": len(rr)},
+            f"sandbox history grew 1, 2, 3, 4 across pause and resume, {where}")
+
+    # E · 2026-10-15, two independent E2B Embed installs
+    mu = runs["e-e2b-2026-10-15/multi.json"]
+    mrid = mu["run_id"]
+    e_agent_runs(mrid, "e.multi.b", mu["agent_runs_host_b"], "host b")
+    refusal_cause = {(c["phase"]): c["cause"] for side in ("a", "b") for c in mu["refused_creates"][side]
+                     if c["phase"] in ("perf_host_a", "two_hosts_at_once")}
+
+    def at_once_summary(level: dict, phase: str) -> dict:
+        sessions = level["sessions"]
+        if len(sessions) != level["sessions_at_once"]:
+            raise BuildError(f"E {phase}: expected {level['sessions_at_once']} session records")
+        per_host: dict[str, dict] = {}
+        for s in sessions:
+            h = per_host.setdefault(s["host"], {"sessions": 0, "answered": 0})
+            h["sessions"] += 1
+            h["answered"] += bool(s.get("remembered"))
+        answered = sum(h["answered"] for h in per_host.values())
+        if answered != level["answered"] or per_host != level["per_host"]:
+            raise BuildError(f"E {phase}: answered counts differ from the session records")
+        refused = [s for s in sessions if not s.get("remembered")]
+        if not all("Failed to place sandbox" in s.get("error", "") for s in refused):
+            raise BuildError(f"E {phase}: a session failed for another reason than a refused sandbox")
+        if any(s.get("sandbox_deleted") is not True or s.get("conversation_deleted") is not True for s in sessions):
+            raise BuildError(f"E {phase}: a session left its sandbox or conversation")
+        return {"n": len(sessions), "unit": "sessions", "answered": answered, "refused": len(refused),
+                "per_host": per_host, "model_http_statuses": level["model_http_statuses"],
+                "refusal_cause": refusal_cause[phase]}
+
+    put("e.multi.one_host", mrid, "LOCAL_MEASUREMENT", at_once_summary(mu["perf_host_a"]["at_once"], "perf_host_a"),
+        "8 sessions at once on host a alone")
+    put("e.multi.two_hosts", mrid, "LOCAL_MEASUREMENT", at_once_summary(mu["two_hosts_at_once"], "two_hosts_at_once"),
+        "8 sessions at once on each of hosts a and b, spread by the client")
+    fits, per_sandbox = [], set()
+    for r in mu["idle_capacity_host_a"]:
+        ok = [c for c in r["creates"] if c["ok"]]
+        if r["refused_at"] != len(ok) + 1 or r["creates"][len(ok)]["ok"] or r["after_kill"]["sandboxes_left"] != 0:
+            raise BuildError(f"E idle capacity run {r['run']}: creates do not end in one refusal, or left sandboxes")
+        taken = [r["before"]["hugepages_taken"]] + [c["hugepages_taken"] for c in ok]
+        per_sandbox |= {b - a for a, b in zip(taken, taken[1:])}
+        fits.append(len(ok))
+    pool, pg = mu["hosts"]["a"]["hugepages"], mu["hosts"]["a"]["postgres_hugepages"]
+    if len(per_sandbox) != 1:
+        raise BuildError(f"E idle capacity: per-sandbox hugepage reservation varies {sorted(per_sandbox)}")
+    page = per_sandbox.pop()
+    if (pool - pg) // page != max(fits):
+        raise BuildError("E idle capacity: the largest count differs from the free hugepages / per-sandbox pages")
+    put("e.multi.idle", mrid, "LOCAL_MEASUREMENT",
+        {"n": len(fits), "unit": "sandboxes", "values": fits, "max": max(fits),
+         "refusals": [r["refusal"] for r in mu["idle_capacity_host_a"]]},
+        "idle base sandboxes created on host a before the first refused create, per run")
+    put("e.multi.hugepages", mrid, "LOCAL_MEASUREMENT",
+        {"n": 1, "unit": "pages", "pool": pool, "postgres": pg, "per_sandbox": page, "fit": max(fits)},
+        "2 MiB hugepages: Compose default pool, held by postgres, reserved by each 512 MiB base sandbox at create")
+    hl = mu["host_loss"]
+    b_after, a_after, a_back = hl["after_loss"]["b"], hl["after_loss"]["a"], hl["after_restart"]["a"]
+    if hl["stop"]["exit_code"] != 0 or hl["start"]["exit_code"] != 0 or hl["start"]["health_up"]["status"] != 200:
+        raise BuildError("E host loss: stopping or starting host a's stack failed")
+    if hl["left_after_cleanup"] != {"a": 0, "b": 0}:
+        raise BuildError("E host loss: sandboxes left after cleanup")
+    put("e.multi.hostloss", mrid, "LOCAL_MEASUREMENT", {
+        "n": 1, "unit": "read-back",
+        "other_live_session": b_after["live_session_read"]["ok"] and b_after["live_session_read"]["value"] == "LANTERN-7",
+        "other_new_session_s": b_after["new_session"]["value"]["wall_s"],
+        "lost_paused_from_other": b_after["connect_lost_hosts_paused_sandbox"]["ok"],
+        "lost_create": a_after["create"]["ok"],
+        "own_paused_after_restart": a_back["resume_own_paused_sandbox"]["ok"],
+        "running_before_stop_after_restart": a_back["live_sandbox_before_loss"]["ok"],
+        "new_session_after_restart_s": a_back["new_session"]["value"]["wall_s"],
+        "stop_s": hl["stop"]["seconds"], "start_s": hl["start"]["seconds"]},
+        "host a's E2B stack stopped with docker compose stop (VM running), then started again")
+
+    # E · 2026-10-15, newest SDK and E2B's official code-interpreter template
+    la = runs["e-e2b-2026-10-15/latest.json"]
+    lrid = la["run_id"]
+    e_agent_runs(lrid, "e.latest.sdk", la["sdk_check"]["runs"], "e2b 2.56.0 on host a")
+    ci = la["code_interpreter"]
+    cr = ci["check_runs"]
+    names = [s["step"] for s in cr[0]["steps"]]
+    if len(cr) != 4 or any([s["step"] for s in r["steps"]] != names for r in cr):
+        raise BuildError("E code-interpreter: expected 4 runs of the same steps")
+    if any(r["leftover_sandboxes"] != 0 for r in cr):
+        raise BuildError("E code-interpreter: a run left a sandbox")
+    steps = {}
+    for i, name in enumerate(names):
+        rows = [r["steps"][i] for r in cr]
+        steps[name] = {"passed": sum(bool(s["ok"]) for s in rows), "min": min(s["seconds"] for s in rows),
+                       "max": max(s["seconds"] for s in rows)}
+    put("e.latest.ci", lrid, "LOCAL_MEASUREMENT",
+        {"n": len(cr), "unit": "runs", "steps": steps,
+         "failed": [k for k, v in steps.items() if v["passed"] < len(cr)]},
+        "code-interpreter-v1 checks with e2b-code-interpreter 2.11.0; seconds per step, min and max")
+    builds = ci["builds"]
+    built = [b for b in builds if b["result"] == "built"]
+    if len(built) != 1 or built[0]["step"] != built[0]["steps"]:
+        raise BuildError("E code-interpreter: expected exactly one complete build")
+    put("e.latest.build", lrid, "LOCAL_MEASUREMENT",
+        {"n": len(builds), "unit": "attempts", "built_attempt": built[0]["attempt"], "built_s": built[0]["seconds"],
+         "steps": built[0]["steps"]},
+        "unchanged build_prod.py against host a; host settings raised between attempts")
 
     return {"schema": 1, "built_from": dict(sorted(index.items())), "metrics": m}
 

@@ -15,8 +15,9 @@ import measure_responses
 
 ROOT = Path(__file__).resolve().parents[1]
 FIX = ROOT / "tests" / "fixtures"
-TOOLS = ["aca_sandbox.py", "measure_aca.py", "measure_responses.py", "measure_e2b.py", "check_isolation.py",
-         "build_measurements.py", "render_docs.py", "build_diagrams.py", "export_evidence.py", "validate_docs.py"]
+TOOLS = ["aca_sandbox.py", "measure_aca.py", "measure_responses.py", "measure_e2b.py", "measure_sessions.py",
+         "measure_code_interpreter.py", "check_isolation.py", "build_measurements.py", "render_docs.py", "build_diagrams.py", "export_evidence.py",
+         "validate_docs.py"]
 
 
 @pytest.mark.parametrize("tool", TOOLS)
@@ -276,3 +277,529 @@ def test_aca_empty_measurement_is_rejected():
     with pytest.raises(SystemExit) as exc:
         measure_aca.main(["agent", "--runs", "0"])
     assert exc.value.code == 2
+
+
+
+# --- measure_e2b: offline fakes for the E2B SDK and the Foundry Responses API -------------------------------
+
+import itertools  # noqa: E402
+import re  # noqa: E402
+
+import measure_e2b  # noqa: E402
+
+
+class FakeHost:
+    def __init__(self, name, root):
+        self.name, self.root, self.sandboxes, self.down = name, Path(root), {}, False
+        self.lossy_resume, self.ids = False, itertools.count(1)
+
+
+class FakeSandbox:
+    """One sandbox: its /home/user is a temporary folder, and commands run in their own Python process."""
+
+    def __init__(self, host, sandbox_id):
+        self.host, self.sandbox_id = host, sandbox_id
+        self.home = host.root / f"{sandbox_id}-{next(host.ids)}"
+        self.home.mkdir(parents=True)
+        self.commands = SimpleNamespace(run=self._run)
+
+    def _run(self, cmd, timeout=60):
+        if self.host.down:
+            raise RuntimeError(f"host {self.host.name} unreachable")
+        script = cmd.split("<<'PY'\n", 1)[1].rsplit("\nPY", 1)[0].replace("/home/user", self.home.as_posix())
+        p = subprocess.run([sys.executable, "-"], input=script, capture_output=True, text=True, timeout=timeout)
+        return SimpleNamespace(exit_code=p.returncode, stdout=p.stdout, stderr=p.stderr)
+
+    def beta_pause(self):
+        if self.host.down:
+            raise RuntimeError("connection refused")
+
+    def kill(self):
+        self.host.sandboxes.pop(self.sandbox_id, None)
+
+
+class FakeSDK:
+    """The (Sandbox, SandboxQuery, SandboxState) triple; every call is routed by the api_url it names."""
+
+    def __init__(self, hosts):
+        sdk = self
+        self.hosts = hosts
+
+        def host(api_url):
+            h = sdk.hosts[api_url]
+            if h.down:
+                raise RuntimeError(f"connection refused: {api_url}")
+            return h
+
+        class Sandbox:
+            @staticmethod
+            def create(template, timeout=300, api_url=None, sandbox_url=None, api_key=None):
+                h = host(api_url)
+                s = FakeSandbox(h, f"{h.name}-sbx-{next(h.ids)}")
+                h.sandboxes[s.sandbox_id] = s
+                return s
+
+            @staticmethod
+            def connect(sandbox_id, api_url=None, sandbox_url=None, api_key=None):
+                h = host(api_url)
+                if sandbox_id not in h.sandboxes:
+                    raise RuntimeError(f"404: sandbox {sandbox_id} not found on {h.name}")
+                if h.lossy_resume:
+                    fresh = FakeSandbox(h, sandbox_id)
+                    h.sandboxes[sandbox_id] = fresh
+                return h.sandboxes[sandbox_id]
+
+            @staticmethod
+            def kill(sandbox_id, api_url=None, sandbox_url=None, api_key=None):
+                host(api_url).sandboxes.pop(sandbox_id, None)
+
+            @staticmethod
+            def list(query=None, api_url=None, sandbox_url=None, api_key=None):
+                items = [SimpleNamespace(sandbox_id=i) for i in host(api_url).sandboxes]
+                pages = [items]
+
+                class Pager:
+                    @property
+                    def has_next(self):
+                        return bool(pages)
+
+                    def next_items(self, **opts):
+                        return pages.pop()
+                return Pager()
+
+        self.triple = (Sandbox, lambda state=None: SimpleNamespace(state=state),
+                       SimpleNamespace(RUNNING="running", PAUSED="paused"))
+
+
+class FakeFoundry:
+    """Plays the Prompt Agent: one tool call with the code a model would write, then a reply from its output."""
+
+    def __init__(self):
+        self.convs, self.versions, self.pending, self.ids = set(), [], {}, itertools.count(1)
+
+    def begin(self):
+        pass
+
+    def statuses(self):
+        return [200, 200]
+
+    def create_agent(self, model):
+        self.versions.append("1")
+        return "1"
+
+    def delete_agent(self, version):
+        self.versions.remove(version)
+
+    def conversation(self):
+        c = f"conv-{next(self.ids)}"
+        self.convs.add(c)
+        return c
+
+    def drop(self, conv_id):
+        self.convs.discard(conv_id)
+        return True
+
+    @staticmethod
+    def code_for(q):
+        m = re.search(r"(?:save the code word|write) (\S+) to (/home/user/\S+?)\.? ", q + " ")
+        if m:
+            return f"open({m.group(2)!r}, 'w').write({m.group(1)!r}); print('saved')"
+        m = re.search(r"read (/home/user/\S+?)\.? ", q + " ")
+        if m:
+            return f"print(open({m.group(1)!r}).read())"
+        m = re.search(r"print (COLD-\d+)", q)
+        return f"print({m.group(1)!r})" if m else "print('alive')"
+
+    @staticmethod
+    def reply(q, out):
+        if "Number only" in q:
+            return str(out["prior_questions_in_sandbox"])
+        if "Reply only OK" in q:
+            return "OK"
+        m = re.search(r"reply with exactly (\S+)", q)
+        if m:
+            return m.group(1)
+        return out["stdout"].strip() if "read /home/user" in q else "Bangkok is the capital of Thailand."
+
+    def req(self, method, path, body=None, timeout=180):
+        user = [i for i in body["input"] if i.get("type") == "message"]
+        if user:
+            self.pending[body["conversation"]] = user[0]["content"]
+            return {"output": [{"type": "function_call", "call_id": "call-1",
+                                "arguments": json.dumps({"python_code": self.code_for(user[0]["content"])})}]}
+        text = self.reply(self.pending[body["conversation"]], json.loads(body["input"][0]["output"]))
+        return {"output": [{"type": "message", "content": [{"type": "output_text", "text": text}]}]}
+
+
+def e2b_hosts(names, monkeypatch, root):
+    fakes = {f"http://{n}:3000": FakeHost(n, root / n) for n in names}
+    sdk = FakeSDK(fakes)
+    hosts = {n: measure_e2b.Host(n, f"http://{n}:3000", f"http://{n}:3002", "test-key", sdk.triple) for n in names}
+    for h in hosts.values():
+        monkeypatch.setattr(h, "health", lambda fake=fakes[h.api_url]: 0 if fake.down else 200)
+    return hosts, fakes
+
+
+def test_e2b_prompts_match_the_measured_run():
+    perf = json.loads((ROOT / "evidence/runs/e-e2b-2026-10-14/perf.json").read_text(encoding="utf-8"))
+    agent = json.loads((ROOT / "evidence/runs/e-e2b-2026-10-14/agent-runs.json").read_text(encoding="utf-8"))
+    assert agent["inputs"]["first"] == measure_e2b.FIRST_Q and agent["inputs"]["warm"] == measure_e2b.COUNT_Q
+    assert perf["inputs"] == {"cold": measure_e2b.COLD_Q, "warm": measure_e2b.WARM_QS,
+                              "scale": [measure_e2b.SCALE_WRITE, measure_e2b.SCALE_READ],
+                              "recovery": [measure_e2b.LIVE_WRITE, measure_e2b.LIVE_READ]}
+    for doc in (agent, perf):
+        assert doc["agent"] == {"instructions": measure_e2b.INSTRUCTIONS, "tools": measure_e2b.TOOLS_SPEC}
+
+
+@pytest.mark.parametrize("lossy", (False, True))
+def test_e2b_agent_run_checks_history_across_pause(monkeypatch, tmp_path, lossy):
+    monkeypatch.setattr(measure_e2b.time, "sleep", lambda _: None)
+    hosts, fakes = e2b_hosts(["a"], monkeypatch, tmp_path)
+    fakes["http://a:3000"].lossy_resume = lossy
+    rec = measure_e2b.agent_run(FakeFoundry(), "1", hosts["a"], 1)
+    if lossy:
+        assert rec["history_lengths"] == [1, 2, 1, 2] and rec["state_kept"] is False and "error" in rec
+    else:
+        assert rec["history_lengths"] == [1, 2, 3, 4] and rec["state_kept"] is True and "error" not in rec
+        assert [rec[k]["response"] for k in ("warm", "first_after_resume", "warm_after_resume")] == ["1", "2", "3"]
+    assert rec["sandbox_deleted"] and rec["conversation_deleted"] and not fakes["http://a:3000"].sandboxes
+
+
+def test_e2b_scale_spreads_sessions_and_counts_per_host(monkeypatch, tmp_path):
+    hosts, fakes = e2b_hosts(["a", "b"], monkeypatch, tmp_path)
+    res = measure_e2b.at_once(FakeFoundry(), "1", [(hosts["ab"[k % 2]], k + 1) for k in range(6)])
+    assert res["sessions_at_once"] == 6 and res["answered"] == 6
+    assert res["per_host"] == {"a": {"sessions": 3, "answered": 3}, "b": {"sessions": 3, "answered": 3}}
+    assert all(s["turn2"]["answer"] == f"SCALE-{s['slot']}" for s in res["sessions"])
+    assert all(s["turn1"]["wall_s"] >= s["turn1"]["agent_turn_s"] for s in res["sessions"])
+    assert res["model_http_statuses"] == {"200": 24}
+    assert all(not f.sandboxes for f in fakes.values())
+
+
+def test_e2b_hostloss_records_what_survives(monkeypatch, tmp_path):
+    monkeypatch.setattr(measure_e2b.time, "sleep", lambda _: None)
+    hosts, fakes = e2b_hosts(["a", "b"], monkeypatch, tmp_path)
+
+    def shell(cmd):
+        fakes["http://a:3000"].down = cmd == "stop"
+        return {"exit_code": 0, "seconds": 0.0, "tail": ""}
+
+    monkeypatch.setattr(measure_e2b, "run_shell", shell)
+    out = measure_e2b.hostloss(FakeFoundry(), "1", hosts, "a", "stop", "start")
+    assert "error" not in out
+    b = out["after_loss"]["b"]
+    assert b["live_session_read"]["ok"] and b["live_session_read"]["value"] == "LANTERN-7"
+    assert b["new_session"]["ok"] and b["new_session"]["value"]["correct"]
+    assert b["connect_lost_hosts_paused_sandbox"]["ok"] is False
+    assert out["after_loss"]["a"]["create"]["ok"] is False
+    assert out["after_loss"]["a"]["connect_own_paused_sandbox"]["ok"] is False
+    resumed = out["after_restart"]["a"]["resume_own_paused_sandbox"]
+    assert resumed["ok"] and resumed["value"] == "PAUSED-a"
+    assert out["left_after_cleanup"] == {"a": 0, "b": 0} and out["conversations_deleted"]
+    assert not measure_e2b.failed({"mode": "hostloss", "hostloss": out})
+
+
+def test_e2b_main_fails_on_lost_state_or_a_leftover(monkeypatch, tmp_path):
+    for k, v in {"PROJECT_ENDPOINT": "https://example.com/api/projects/p", "ACA_MODEL": "gpt-5.4-mini",
+                 "E2B_API_URL": "http://a:3000", "E2B_SANDBOX_URL": "http://a:3002", "E2B_API_KEY": "test-key"}.items():
+        monkeypatch.setenv(k, v)
+    monkeypatch.delenv("FOUNDRY_TOKEN_SOURCE", raising=False)
+    monkeypatch.setattr(measure_e2b.time, "sleep", lambda _: None)
+    fakes = {"http://a:3000": FakeHost("a", tmp_path / "a")}
+    monkeypatch.setattr(measure_e2b, "load_sdk", lambda: FakeSDK(fakes).triple)
+    monkeypatch.setattr(measure_e2b.Host, "health", lambda self: 200)
+    monkeypatch.setattr(measure_e2b, "token", lambda: "test-token")
+    fd = FakeFoundry()
+    monkeypatch.setattr(measure_e2b, "Foundry", lambda endpoint, tok: fd)
+    assert measure_e2b.main(["agent", "--runs", "1", "--out-dir", str(tmp_path / "ok")]) == 0
+    assert fd.versions == [] and fd.convs == set()
+    doc = json.loads(next((tmp_path / "ok").glob("e2b-agent-*.json")).read_text(encoding="utf-8"))
+    assert doc["agent"]["instructions"] == measure_e2b.INSTRUCTIONS and "test-key" not in json.dumps(doc)
+    fakes["http://a:3000"].lossy_resume = True
+    assert measure_e2b.main(["agent", "--runs", "1", "--out-dir", str(tmp_path / "lossy")]) == 1
+    fakes["http://a:3000"].lossy_resume = False
+    stray = FakeSandbox(fakes["http://a:3000"], "stray")
+    fakes["http://a:3000"].sandboxes["stray"] = stray
+    assert measure_e2b.main(["agent", "--runs", "1", "--out-dir", str(tmp_path / "left")]) == 1
+
+
+def test_e2b_lost_state_or_a_leak_is_not_exit_0():
+    perf = {"mode": "perf", "warm": {"remembered": True}, "at_once": [{"answered": 1, "sessions_at_once": 1}],
+            "recovery": {"followup_on_live_session": {"state_preserved": False}, "sandboxes_deleted": True,
+                         "conversation_deleted": True}}
+    assert measure_e2b.failed(perf)
+    perf["recovery"]["followup_on_live_session"]["state_preserved"] = True
+    assert not measure_e2b.failed(perf)
+    session = {"ok": True, "value": {"sandbox_deleted": True, "conversation_deleted": True}}
+    hl = {"lost_host": "a", "stop": {"exit_code": 0}, "start": {"exit_code": 0, "health_up": {"status": 200}},
+          "after_loss": {"b": {"live_session_read": {"ok": True, "value": "LANTERN-7"}, "new_session": session,
+                               "connect_lost_hosts_paused_sandbox": {"ok": False, "error": "not found"}},
+                         "a": {"create": {"ok": False, "error": "refused"},
+                               "connect_own_paused_sandbox": {"ok": False, "error": "refused"}}},
+          "after_restart": {"a": {"resume_own_paused_sandbox": {"ok": True, "value": "PAUSED-a"},
+                                  "live_sandbox_before_loss": {"ok": False, "error": "not found"},
+                                  "new_session": session}},
+          "left_after_cleanup": {"a": 0, "b": 0}, "conversations_deleted": True}
+    assert not measure_e2b.failed({"mode": "hostloss", "hostloss": hl})
+    breaks = [lambda h: h.update(conversations_deleted=False),
+              lambda h: h.update(left_after_cleanup={"a": 1, "b": 0}),
+              lambda h: h.update(left_after_cleanup={"a": "unreachable", "b": 0}),
+              lambda h: h["after_loss"]["b"]["new_session"]["value"].update(sandbox_deleted=False),
+              lambda h: h["after_loss"]["b"]["live_session_read"].update(ok=False),
+              lambda h: h["after_loss"]["b"]["live_session_read"].update(value="LANTERN-8"),
+              lambda h: h["after_loss"]["b"]["new_session"].update(ok=False),
+              lambda h: h["after_restart"]["a"]["new_session"].update(ok=False),
+              lambda h: h["after_restart"]["a"]["resume_own_paused_sandbox"].update(ok=False)]
+    for i, brk in enumerate(breaks):
+        h = json.loads(json.dumps(hl))
+        brk(h)
+        assert measure_e2b.failed({"mode": "hostloss", "hostloss": h}), i
+    mu = json.loads((ROOT / "evidence/runs/e-e2b-2026-10-15/multi.json").read_text(encoding="utf-8"))
+    assert not measure_e2b.failed({"mode": "hostloss", "hostloss": mu["host_loss"]})
+    assert measure_e2b.session_attempt(lambda: {"http": 0, "error": "SandboxException: 500"})["ok"] is False
+    assert measure_e2b.session_attempt(lambda: {"http": 200, "correct": True})["ok"] is True
+
+
+def test_e2b_recovery_and_hostloss_clean_up_when_a_call_fails(monkeypatch, tmp_path):
+    monkeypatch.setattr(measure_e2b.time, "sleep", lambda _: None)
+
+    def second_call_fails(fn):
+        n = itertools.count(1)
+        return lambda: (_ for _ in ()).throw(RuntimeError("HTTP 500")) if next(n) == 2 else fn()
+
+    hosts, fakes = e2b_hosts(["a"], monkeypatch, tmp_path / "r")
+    monkeypatch.setattr(hosts["a"], "create", second_call_fails(hosts["a"].create))
+    fd = FakeFoundry()
+    out = measure_e2b.recovery(fd, "1", hosts["a"])
+    assert "error" in out and out["sandboxes_deleted"] and out["conversation_deleted"]
+    assert not fakes["http://a:3000"].sandboxes and fd.convs == set()
+
+    monkeypatch.setattr(measure_e2b, "run_shell", lambda cmd: {"exit_code": 0, "seconds": 0.0, "tail": ""})
+    hosts, fakes = e2b_hosts(["a", "b"], monkeypatch, tmp_path / "h")
+    fd = FakeFoundry()
+    fd.conversation = second_call_fails(fd.conversation)
+    out = measure_e2b.hostloss(fd, "1", hosts, "a", "stop", "start")
+    assert "error" in out and out["conversations_deleted"] and fd.convs == set()
+    assert measure_e2b.failed({"mode": "hostloss", "hostloss": out})
+
+
+def test_e2b_bad_hosts_file_is_a_setting_error(monkeypatch, tmp_path):
+    for k, v in {"PROJECT_ENDPOINT": "https://example.com/api/projects/p", "ACA_MODEL": "gpt-5.4-mini"}.items():
+        monkeypatch.setenv(k, v)
+    monkeypatch.setattr(measure_e2b, "load_sdk", lambda: FakeSDK({}).triple)
+    for name, content in (("missing.json", None), ("broken.json", "{not json"), ("flat.json", '{"a": "http://a:3000"}')):
+        path = tmp_path / name
+        if content is not None:
+            path.write_text(content, encoding="utf-8")
+        assert measure_e2b.main(["agent", "--hosts", str(path), "--out-dir", str(tmp_path / "out")]) == 2, name
+
+
+import measure_sessions  # noqa: E402
+
+
+class FakeSessionsAPI:
+    """The hosted-agent session endpoints of one agent version, for measure_sessions.Client."""
+
+    def __init__(self, lose_marker=False, flat_count=False, stray=False):
+        self.sessions, self.files, self.turns, self.ids = {}, {}, {}, itertools.count(1)
+        self.lose_marker, self.flat_count, self.stray = lose_marker, flat_count, stray
+
+    def call(self, op, method, path, *, body=None, raw=None):
+        rec = {"status": 200, "attempts": [{"status": 200, "seconds": 0.01}], "total_s": 0.01, "success_s": 0.01}
+        sid = next((s for s in self.sessions if f"/sessions/{s}" in path), None)
+        out: dict = {}
+        if op == "read_version":
+            out = {"definition": {"kind": "hosted"}}
+        elif op == "create_session":
+            sid = f"s{next(self.ids)}"
+            self.sessions[sid], rec["status"] = "active", 201
+            out = {"agent_session_id": sid, "status": "active"}
+            if self.stray:
+                self.sessions["orphan"] = "active"
+        elif op == "upload_file":
+            self.files[sid] = raw.decode("utf-8")
+        elif op == "download_file":
+            return rec, (b"" if self.lose_marker else self.files[sid].encode("utf-8"))
+        elif op == "stop_session":
+            self.sessions[sid] = "idle"
+        elif op == "get_session":
+            out = {"status": self.sessions[sid]}
+        elif op == "responses":
+            sid = body["agent_session_id"]
+            self.sessions[sid] = "active"
+            n = self.turns.get(sid, 0)
+            self.turns[sid] = n + 1
+            text = "Bangkok is in Thailand." if n == 0 else ("1" if self.flat_count else str(n))
+            out = {"id": f"r{n}", "agent_session_id": sid, "created_at": 1, "completed_at": 2,
+                   "output": [{"content": [{"text": text}]}]}
+        elif op == "delete_session":
+            self.sessions.pop(sid or path.rsplit("/", 1)[-1], None)
+            rec["status"] = 204
+        elif op == "list_sessions":
+            out = {"data": [{"agent_session_id": s, "created_at": 4e9, "version_indicator": {"agent_version": "2"}}
+                            for s in self.sessions]}
+        return rec, json.dumps(out).encode("utf-8")
+
+
+@pytest.mark.parametrize("fault,code", [(None, 0), ("lose_marker", 1), ("flat_count", 1), ("stray", 0)])
+def test_sessions_exit_code_needs_state_and_cleanup(monkeypatch, tmp_path, fault, code):
+    api = FakeSessionsAPI(**({fault: True} if fault else {}))
+    monkeypatch.setattr(measure_sessions, "auth_header", lambda: ("Authorization", "Bearer test-token"))
+    monkeypatch.setattr(measure_sessions.Client, "call", lambda self, *a, **k: api.call(*a, **k))
+    monkeypatch.setattr(measure_sessions.time, "sleep", lambda _: None)
+    args = ["--project-endpoint", "https://example.com/api/projects/p", "--agent", "maf-agent", "--version", "2",
+            "--runs", "1", "--out", str(tmp_path / "raw.json")]
+    assert measure_sessions.main(args) == code
+    raw = json.loads((tmp_path / "raw.json").read_text(encoding="utf-8"))
+    assert raw["cleanup"]["extra_deleted"] == raw["cleanup"]["extra_sessions"] == (1 if fault == "stray" else 0)
+    assert not api.sessions and "test-token" not in json.dumps(raw)
+    with pytest.raises(SystemExit):
+        measure_sessions.main(args[:-4] + ["--runs", "0", "--out", str(tmp_path / "zero.json")])
+
+
+def test_e2b_supplementary_record_matches_the_tools():
+    latest = json.loads((ROOT / "evidence/runs/e-e2b-2026-10-15/latest.json").read_text(encoding="utf-8"))
+    sdk = latest["sdk_check"]
+    assert sdk["agent"] == {"instructions": measure_e2b.INSTRUCTIONS, "tools": measure_e2b.TOOLS_SPEC}
+    assert sdk["inputs"] == {"first": measure_e2b.FIRST_Q, "count": measure_e2b.COUNT_Q,
+                             "resume_wait_s": measure_e2b.RESUME_WAIT_S}
+    runs = latest["code_interpreter"]["check_runs"]
+    want = ["create (default template)", "README: x = 1", "README: x+=1; x", "pandas sum", "matplotlib png",
+            "javascript kernel", "exception", "pause", "connect (resume)", "x after resume", "kill"]
+    assert all([s["step"] for s in r["steps"]] == want for r in runs)
+    assert mci.RESUME_WAIT_S == 5 and mci.JS_CODE == "[1, 2, 3].reduce((a, b) => a + b)"
+    for r in runs:
+        observed = {s["step"]: s["observed"] for s in r["steps"]}
+        assert set(observed["create (default template)"]) == {"sdk_default_template", "template_name", "cpu_count",
+                                                              "memory_mb"}
+        assert set(observed["matplotlib png"]) == {"results", "png_bytes_base64"}
+
+
+# --- measure_code_interpreter: an offline fake of the code-interpreter SDK -----------------------------------
+
+import measure_code_interpreter as mci  # noqa: E402
+
+
+class FakeKernel:
+    """Executes run_code cells with the official template server's JavaScript behaviour switchable."""
+
+    def __init__(self, js_env_bug):
+        self.vars, self.js_env_bug, self.js_cells = {}, js_env_bug, 0
+
+    def run(self, code, language="python"):
+        err, out, results = None, "", []
+        if language == "javascript":
+            self.js_cells += 1
+            if self.js_env_bug and self.js_cells == 1 and code.startswith("["):
+                err = SimpleNamespace(name="TypeError", value="\"tpl\"[(1 , 2 , 3)].reduce is not a function",
+                                      traceback="TypeError: \"tpl\"[(1 , 2 , 3)].reduce is not a function")
+            else:
+                out = "6"
+        elif code == "1/0":
+            err = SimpleNamespace(name="ZeroDivisionError", value="division by zero",
+                                  traceback="ZeroDivisionError: division by zero")
+        elif "plt.show()" in code:
+            results = [SimpleNamespace(png="iVBOR", formats=lambda: ["text", "png", "chart"])]
+        elif "pd.DataFrame" in code:
+            out = "10"
+        elif code == "x = 1":
+            self.vars["x"] = 1
+        elif code == "x+=1; x":
+            self.vars["x"] += 1
+            out = str(self.vars["x"])
+        elif code == "x":
+            out = str(self.vars.get("x", ""))
+        return SimpleNamespace(text=out or None, error=err, results=results,
+                               logs=SimpleNamespace(stdout=[], stderr=[]))
+
+
+def fake_ci_sdk(js_env_bug=False, lossy_pause=False, leave_one=False, info_fails=False):
+    live = {}
+
+    class Sbx:
+        def __init__(self, sid):
+            self.sandbox_id, self.kernel = sid, FakeKernel(js_env_bug)
+
+        def get_info(self):
+            if info_fails:
+                raise RuntimeError("GET /sandboxes/{id}: HTTP 500")
+            return SimpleNamespace(template_id="tpl-1", name="code-interpreter-v1", cpu_count=2, memory_mb=2048)
+
+        def run_code(self, code, language="python"):
+            return self.kernel.run(code, language)
+
+        def pause(self):
+            if lossy_pause:
+                self.kernel = FakeKernel(js_env_bug)
+            return True
+
+        def kill(self):
+            if not leave_one:
+                live.pop(self.sandbox_id, None)
+            return True
+
+    class Sandbox:
+        default_template = "code-interpreter-v1"
+
+        @staticmethod
+        def create(timeout=600, **opts):
+            assert opts == {"api_url": "http://a:3000", "sandbox_url": "http://a:3002", "api_key": "test-key"}
+            s = Sbx(f"sbx-{len(live) + 1}")
+            live[s.sandbox_id] = s
+            return s
+
+        @staticmethod
+        def connect(sid, **opts):
+            return live[sid]
+
+        @staticmethod
+        def list(query=None, **opts):
+            pages = [[SimpleNamespace(sandbox_id=i) for i in live]]
+
+            class Pager:
+                @property
+                def has_next(self):
+                    return bool(pages)
+
+                def next_items(self, **o):
+                    return pages.pop()
+            return Pager()
+
+    return Sandbox, (lambda state=None: state), SimpleNamespace(RUNNING="running", PAUSED="paused")
+
+
+@pytest.mark.parametrize("case,code,failed", [("ok", 0, []), ("js", 1, ["javascript kernel"]),
+                                              ("lossy", 1, ["x after resume"]), ("leftover", 1, [])])
+def test_code_interpreter_check(monkeypatch, tmp_path, case, code, failed):
+    for k, v in {"E2B_API_URL": "http://a:3000", "E2B_SANDBOX_URL": "http://a:3002", "E2B_API_KEY": "test-key"}.items():
+        monkeypatch.setenv(k, v)
+    monkeypatch.setattr(mci.time, "sleep", lambda _: None)
+    monkeypatch.setattr(mci, "load_sdk", lambda: fake_ci_sdk(js_env_bug=case == "js", lossy_pause=case == "lossy",
+                                                            leave_one=case == "leftover"))
+    assert mci.main(["--out-dir", str(tmp_path)]) == code
+    doc = json.loads(next(tmp_path.glob("ci-test-*.json")).read_text(encoding="utf-8"))
+    assert [s["step"] for s in doc["steps"] if not s["ok"]] == failed
+    assert doc["leftover_sandboxes"] == (1 if case == "leftover" else 0)
+    assert "test-key" not in json.dumps(doc)
+    zero = next(s for s in doc["steps"] if s["step"] == "exception")
+    assert zero["ok"] and zero["execution"]["error"]["name"] == "ZeroDivisionError"
+    if case == "js":
+        js = next(s for s in doc["steps"] if s["step"] == "javascript kernel")
+        assert js["execution"]["error"]["name"] == "TypeError" and js["observed"]["error"] == "TypeError"
+
+
+def test_code_interpreter_kills_a_sandbox_whose_create_check_failed(monkeypatch, tmp_path):
+    for k, v in {"E2B_API_URL": "http://a:3000", "E2B_SANDBOX_URL": "http://a:3002", "E2B_API_KEY": "test-key"}.items():
+        monkeypatch.setenv(k, v)
+    monkeypatch.setattr(mci.time, "sleep", lambda _: None)
+    monkeypatch.setattr(mci, "load_sdk", lambda: fake_ci_sdk(info_fails=True))
+    assert mci.main(["--out-dir", str(tmp_path)]) == 1
+    doc = json.loads(next(tmp_path.glob("ci-test-*.json")).read_text(encoding="utf-8"))
+    assert [(s["step"], s["ok"]) for s in doc["steps"]] == [("create (default template)", False), ("kill", True)]
+    assert doc["leftover_sandboxes"] == 0
+
+
+def test_code_interpreter_check_needs_settings(monkeypatch, tmp_path):
+    for k in ("E2B_API_URL", "E2B_SANDBOX_URL", "E2B_API_KEY"):
+        monkeypatch.delenv(k, raising=False)
+    assert mci.main(["--out-dir", str(tmp_path)]) == 2

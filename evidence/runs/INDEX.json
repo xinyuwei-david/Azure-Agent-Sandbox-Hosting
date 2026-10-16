@@ -5,6 +5,7 @@
   "a-aca-2026-10-09/late-mount.json": "c81ac0539603589d7beb3422537c6a7f6a24994ece00db566244a29b50eeea3c",
   "abc-2026-09-27/foundation.json": "e7d733b8ad0e56dfb6acab73261d3750838ff6725b4b4352cd0e0ffb131d17f6",
   "b-hosted-agent-2026-09-27/run.json": "bae0b8e3eee47f6b62decd2f2cb63fec87b0e7ff36d6ca486c7820ae1db7e3ac",
+  "b-sessions-2026-10-15/sessions.json": "f5f8ab69e87fac648df137d6dbf549e32a4e783448f37be8298d19a050a377af",
   "c-aks-agent-sandbox-2026-09-27/run.json": "2e63af0990bacff14136796256061b9e5e688a2f26ad23c5f211b3d25f61e077",
   "d-byoaks-2026-09-22/field.json": "15b384f087ceaceef87f66cde174803cafd51d7c5c1fe1455802cb52b2acce1c",
   "d-byoaks-2026-09-29/bench.json": "4b24197e2e075f0f669e65b778e9ca5fd687c5b1ec9f44bd2fc79759b13f5dd7",
@@ -13,6 +14,8 @@
   "d-byoaks-2026-09-29/model-direct.json": "f55403b68aca3ec7fc6382287ec071b06813d4bdc284d7f927e0f47e60488b18",
   "d-byoaks-2026-09-29/placement.json": "a19f92faf818acb0c3bf1e7f757dcdae7c0d36364cf310f6f5ebc96363d863d2",
   "d-byoaks-2026-09-29/recovery.json": "f3f21116914bc42268e8cfaee4c28097c75dfe389729669b406e37eef11e2fdb",
-  "e-e2b-2026-10-14/agent-runs.json": "a3324fe00ddc479f581dfe465fcec490105e8d1188c8c655181e5afb651746f7",
-  "e-e2b-2026-10-14/perf.json": "f1d04192795164ba4d42b2179280af9e5e22b4f71d8ca374183503587f5853f7"
+  "e-e2b-2026-10-14/agent-runs.json": "703c7af57ad26ab02491a5d762b7fd5de4c4998ce549702b49aa522a208d95d6",
+  "e-e2b-2026-10-14/perf.json": "6a46bb8ca6c4dfa5b7779ce1912e29bf1159762b0f06dea6c078abf2edb72551",
+  "e-e2b-2026-10-15/latest.json": "3861f0b8d5f8f181831f9275237bb4de15cb89cadf4164e13a9165cd64505209",
+  "e-e2b-2026-10-15/multi.json": "7b42cb1af075252de478426bf4a09603278bbb1f9fd99b0343dfff96c61c5682"
 }

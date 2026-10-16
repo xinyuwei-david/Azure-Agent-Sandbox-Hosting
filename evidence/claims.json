@@ -14,7 +14,7 @@
   "measurement_scope": {
     "region": "East US 2",
     "first_date": "2026-09-22",
-    "last_date": "2026-10-14"
+    "last_date": "2026-10-15"
   },
   "run_order": [
     "a-2026-09-27-setup",
@@ -22,12 +22,15 @@
     "a-2026-10-09-attribution",
     "a-2026-10-09-late-mount",
     "b-2026-09-27",
+    "b-2026-10-15-sessions",
     "c-2026-09-27",
     "d-2026-09-29-placement",
     "d-2026-09-29-perf",
     "d-2026-09-29-recovery",
     "e-2026-10-14-agent",
-    "e-2026-10-14-perf"
+    "e-2026-10-14-perf",
+    "e-2026-10-15-latest",
+    "e-2026-10-15-multi"
   ],
   "letter_mapping": {
     "A": {
@@ -182,6 +185,9 @@
     "aks_compute_isolation_scope": "https://learn.microsoft.com/azure/aks/concepts-pod-sandboxing",
     "aks_stop_start": "https://learn.microsoft.com/azure/aks/start-stop-cluster",
     "e2b_runtime_embed": "https://github.com/e2b-dev/runtime/tree/588e5b9500b0987bc5a700d91483b03f0ae7d2a2",
-    "e2b_docs": "https://e2b.dev/docs/sandbox"
+    "e2b_docs": "https://e2b.dev/docs/sandbox",
+    "e2b_embed_hub": "https://github.com/e2b-dev/runtime/blob/588e5b9500b0987bc5a700d91483b03f0ae7d2a2/embed/README.md",
+    "e2b_embed_azure_terraform": "https://github.com/e2b-dev/runtime/blob/588e5b9500b0987bc5a700d91483b03f0ae7d2a2/embed/terraform/azure/README.md",
+    "e2b_code_interpreter": "https://github.com/e2b-dev/code-interpreter/tree/162a2a25b6a5ea5806749a437b96cbdc5bfc087e/template"
   }
 }

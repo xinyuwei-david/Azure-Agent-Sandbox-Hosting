@@ -95,77 +95,99 @@ def quote(lines: list[str]) -> str:
 
 def b_comparison(c: Ctx) -> str:
     m = c.m
+    k = m["b.sess.state_kept"]
     claims = json.loads((ROOT / "evidence" / "claims.json").read_text(encoding="utf-8"))
     head = [c.t("Observed or documented", "实测或文档项"), "A · ACA Sandboxes",
             c.t("B · Foundry hosted agent", "B · Foundry hosted agent"),
             "C · AKS + agent-sandbox", "D · BYO-AKS", "E · E2B on Azure VM"]
     rows = [
-        [c.t("**Sandbox or pod until ready (no external volume)**", "**纯沙箱或 pod 就绪（不挂外部卷）**"),
-         c.t(f"{c.med('a.attr.image')}; with VNet {rng(m['a.attr.vnet'])} s (n={m['a.attr.vnet']['n']}), "
+        [c.t("**Cold start = sum of**", "**冷启动 = 哪几段相加**"),
+         c.t("sandbox create → Running + first answer (timed inside the sandbox)",
+             "沙箱创建 → Running + 第一个回答（沙箱内计时）"),
+         c.t("create session → `active` + first answer (two client requests)",
+             "创建会话 → `active` + 第一个回答（客户端发两次请求）"),
+         c.t("`kubectl apply` → Sandbox Ready (includes the Blob PVC mount) + first answer (at the LoadBalancer)",
+             "`kubectl apply` → Sandbox Ready（含挂 Blob PVC）+ 第一个回答（LoadBalancer 处计时）"),
+         c.t("session pod created → Ready + pod Ready → first answer (endpoint, session and agent path)",
+             "会话 pod 创建 → Ready + pod Ready 后到第一个回答（端点、会话和 agent 链路）"),
+         c.t("E2B sandbox create → Running + first answer (Prompt Agent turn that calls the sandbox tool)",
+             "E2B 沙箱创建 → Running + 第一个回答（调用沙箱工具的 Prompt Agent 轮次）")],
+        [c.t("**Pure cold start, no external volume (total)**", "**纯冷启动总计（不挂外部卷）**"),
+         c.t(f"**{num(m['a.cold_no_volume']['value'])} s** derived ({num(m['a.attr.image']['median'])} s + "
+             f"{num(m['a.first_answer']['median'])} s, medians of separate runs)",
+             f"**{num(m['a.cold_no_volume']['value'])} s** 合成值（{num(m['a.attr.image']['median'])} s + "
+             f"{num(m['a.first_answer']['median'])} s，取自不同实测的中位数）"),
+         c.t(f"**{num(m['b.sess.cold']['median'])} s** median ({rng(m['b.sess.cold'])}; n={m['b.sess.cold']['n']}), "
+             f"added per run; one request that auto-creates the session on the first `/responses`: "
+             f"{num(m['b.cold_gateway']['value'])} s (gateway model route) / {num(m['b.cold_direct']['value'])} s "
+             "(direct), n=1 each",
+             f"**{num(m['b.sess.cold']['median'])} s** 中位数（{rng(m['b.sess.cold'])}；n={m['b.sess.cold']['n']}），"
+             f"每次实测相加；首次 `/responses` 自动建会话、一次请求完成：{num(m['b.cold_gateway']['value'])} s"
+             f"（gateway 模型路由）/ {num(m['b.cold_direct']['value'])} s（direct），各 n=1"),
+         c.t("not measured: C keeps state across suspend only through the Blob PVC, so every measured cold start mounted it",
+             "未测：C 只能靠 Blob PVC 跨挂起保状态，所以实测的冷启动都挂了卷"),
+         c.t(f"**{num(m['d.cold']['median'])} s** median ({rng(m['d.cold'])}; n={m['d.cold']['n']}), "
+             "one request via the Foundry endpoint",
+             f"**{num(m['d.cold']['median'])} s** 中位数（{rng(m['d.cold'])}；n={m['d.cold']['n']}），经 Foundry 端点一次请求"),
+         c.t(f"**{num(m['e.cold']['median'])} s** median ({rng(m['e.cold'])}; n={m['e.cold']['n']}), added per run "
+             f"(A protocol); {c.med('e.d_cold')} in one request (D protocol)",
+             f"**{num(m['e.cold']['median'])} s** 中位数（{rng(m['e.cold'])}；n={m['e.cold']['n']}），每次实测相加"
+             f"（A 口径）；一次请求 {c.med('e.d_cold')}（D 口径）")],
+        [c.t("└ part 1: sandbox, session or pod ready", "└ 子项 1：沙箱、会话或 pod 就绪"),
+         c.t(f"{c.med('a.attr.image')} (image only); with VNet {rng(m['a.attr.vnet'])} s (n={m['a.attr.vnet']['n']}), "
              f"port {rng(m['a.attr.port'])} s (n={m['a.attr.port']['n']})",
-             f"{c.med('a.attr.image')}；加 VNet {rng(m['a.attr.vnet'])} s（n={m['a.attr.vnet']['n']}），"
+             f"{c.med('a.attr.image')}（仅镜像）；加 VNet {rng(m['a.attr.vnet'])} s（n={m['a.attr.vnet']['n']}），"
              f"加端口 {rng(m['a.attr.port'])} s（n={m['a.attr.port']['n']}）"),
-         c.t(f"auto-created on first `/responses` call (first byte {num(m['b.cold_gateway_ttfb']['value'])} s gateway, "
-             f"{num(m['b.cold_direct_ttfb']['value'])} s direct, n=1); or pre-create via `POST .../endpoint/sessions`",
-             f"首次 `/responses` 自动创建（首字节 {num(m['b.cold_gateway_ttfb']['value'])} s gateway、"
-             f"{num(m['b.cold_direct_ttfb']['value'])} s direct，n=1）；亦支持 `POST .../endpoint/sessions` 显式预建"),
-         c.t(f"image cached (with PVC): resume → Ready {num(m['c.resume_ready']['value'])} s (n=1), "
-             f"pod recreate → Ready {num(m['c.pod_lost']['value'])} s (n=1); fresh node + PVC {num(m['c.apply_ready']['value'])} s (n=1)",
-             f"镜像已缓存（含 PVC）：恢复 → Ready {num(m['c.resume_ready']['value'])} s（n=1），"
-             f"删 pod 重建 → Ready {num(m['c.pod_lost']['value'])} s（n=1）；新节点 + PVC {num(m['c.apply_ready']['value'])} s（n=1）"),
+         c.t(f"{c.med('b.sess.create')}, `POST .../endpoint/sessions` → `active`",
+             f"{c.med('b.sess.create')}，`POST .../endpoint/sessions` → `active`"),
+         c.t("not measured without the PVC", "未测（不挂 PVC）"),
          c.t(f"{rng(m['d.pod_ready'])} s (n={m['d.pod_ready']['n']}) with the image cached; "
              f"{num(m['d.pod_ready_fresh']['min'])} s on a fresh node (n={m['d.pod_ready_fresh']['n']})",
              f"镜像已缓存 {rng(m['d.pod_ready'])} s（n={m['d.pod_ready']['n']}）；新节点 "
              f"{num(m['d.pod_ready_fresh']['min'])} s（n={m['d.pod_ready_fresh']['n']}）"),
-         c.t(f"{c.med('e.create')} across network; {c.rng_n('e.bench20.create')} on host",
-             f"跨网 {c.med('e.create')}；本机 {c.rng_n('e.bench20.create')}")],
-        [c.t("**External private storage volume overhead**", "**外挂私有存储卷附加耗时**"),
-         c.t(f"+{num(m['a.blob_mount_overhead']['value'])} s median when mounting private Blob volume "
-             f"(create → Running {c.med('a.create')}); not needed for Memory snapshot",
-             f"挂载私有 Blob 卷增加中位数 +{num(m['a.blob_mount_overhead']['value'])} s"
-             f"（create → Running {c.med('a.create')}）；Memory 快照无需挂卷"),
-         c.t("none (platform restores $HOME and /files)", "无（平台恢复 $HOME 和 /files）"),
-         c.t(f"apply → Ready with Blob PVC {num(m['c.apply_ready']['value'])} s (n=1; required across suspend)",
-             f"带 Blob PVC 的 apply → Ready {num(m['c.apply_ready']['value'])} s（n=1；跨挂起保状态必需）"),
-         c.t("none in session pod", "会话 pod 未挂外部卷"),
-         c.t("none (Firecracker snapshot uses local SSD)", "无（Firecracker 快照写本机 SSD）")],
-        [c.t("**First answer after sandbox ready**", "**沙箱就绪后 → 第一个回答**"),
+         c.t(f"{c.med('e.create')} in the agent runs; {c.rng_n('e.bench20.create')} in the on-host microbenchmark",
+             f"agent 实测中 {c.med('e.create')}；本机微基准 {c.rng_n('e.bench20.create')}")],
+        [c.t("└ part 2: ready → first answer", "└ 子项 2：就绪后 → 第一个回答"),
          c.t(f"{c.med('a.first_answer')}, timed inside the sandbox",
              f"{c.med('a.first_answer')}，沙箱内计时"),
-         c.t(f"{c.vals('b.warm_gateway')} (gateway) and {c.vals('b.warm_direct')} (direct) in an active sandbox",
-             f"已就绪沙箱内 {c.vals('b.warm_gateway')}（gateway）与 {c.vals('b.warm_direct')}（direct）"),
+         c.t(f"{c.med('b.sess.first')} on the active session; the service recorded "
+             f"{rng(m['b.sess.first_server'])} s of it as generation",
+             f"已就绪会话上 {c.med('b.sess.first')}；其中服务端记录的生成时间 {rng(m['b.sess.first_server'])} s"),
          c.t(f"{num(m['c.first']['value'])} s (n=1), at the LoadBalancer",
              f"{num(m['c.first']['value'])} s（n=1），在 LoadBalancer 处计时"),
          c.t(f"{c.med('d.first_after_ready')} after pod Ready (agent turn {rng(m['d.agent_turn'])} s)",
              f"pod Ready 后 {c.med('d.first_after_ready')}（agent 轮次 {rng(m['d.agent_turn'])} s）"),
          c.t(f"{c.med('e.first_answer')} (A protocol); {c.med('e.d_agent_turn')} (D protocol)",
              f"{c.med('e.first_answer')}（A 口径）；{c.med('e.d_agent_turn')}（D 口径）")],
-        [c.t("**New session → first answer (no external volume)**", "**新会话 → 第一个回答（不挂外部卷，同口径）**"),
-         c.t(f"{num(m['a.cold_no_volume']['value'])} s derived median "
-             f"(image create {num(m['a.attr.image']['median'])} s + first answer {num(m['a.first_answer']['median'])} s)",
-             f"合成中位数 {num(m['a.cold_no_volume']['value'])} s"
-             f"（镜像创建 {num(m['a.attr.image']['median'])} s + 首次回答 {num(m['a.first_answer']['median'])} s）"),
-         c.t(f"{num(m['b.cold_gateway']['value'])} s (n=1, via the Foundry endpoint; model route: gateway (APIM)); "
-             f"{num(m['b.cold_direct']['value'])} s (n=1, direct)",
-             f"{num(m['b.cold_gateway']['value'])} s（n=1，经 Foundry 端点；模型路由：gateway（APIM））；"
-             f"{num(m['b.cold_direct']['value'])} s（n=1，direct）"),
-         c.t("not applicable (requires Blob PVC to keep state)", "不适用（不挂 Blob PVC 无法跨挂起保状态）"),
-         c.t(c.med("d.cold") + ", via the Foundry endpoint", c.med("d.cold") + "，经 Foundry 端点"),
-         c.t(f"{c.med('e.cold')} (A protocol); {c.med('e.d_cold')} (D protocol)",
-             f"{c.med('e.cold')}（A 口径）；{c.med('e.d_cold')}（D 口径）")],
-        [c.t("**New session → first answer (with private Blob volume)**", "**新会话 → 第一个回答（带私有 Blob 卷）**"),
-         c.t(c.med("a.cold") + "; SDK create + answer inside sandbox",
-             c.med("a.cold") + "；SDK 创建 + 沙箱内回答"),
-         c.t("no external Blob volume mounted", "未挂外部 Blob 卷"),
-         c.t(f"{num(m['c.cold']['value'])} s (n=1; apply → Ready {num(m['c.apply_ready']['value'])} s + answer "
+        [c.t("**Cold start with a private Blob volume (total)**", "**带私有 Blob 卷的冷启动总计**"),
+         c.t(f"**{num(m['a.cold']['median'])} s** median ({rng(m['a.cold'])}; n={m['a.cold']['n']}); "
+             "SDK create + answer inside sandbox",
+             f"**{num(m['a.cold']['median'])} s** 中位数（{rng(m['a.cold'])}；n={m['a.cold']['n']}）；SDK 创建 + 沙箱内回答"),
+         c.t("no external volume (the platform restores `$HOME` and `/files`)",
+             "不挂外部卷（平台恢复 `$HOME` 和 `/files`）"),
+         c.t(f"**{num(m['c.cold']['value'])} s** (n=1; apply → Ready {num(m['c.apply_ready']['value'])} s + answer "
              f"{num(m['c.first']['value'])} s)",
-             f"{num(m['c.cold']['value'])} s（n=1；apply → Ready {num(m['c.apply_ready']['value'])} s + 回答 "
+             f"**{num(m['c.cold']['value'])} s**（n=1；apply → Ready {num(m['c.apply_ready']['value'])} s + 回答 "
              f"{num(m['c.first']['value'])} s）"),
-         c.t("no external Blob volume mounted", "未挂外部 Blob 卷"),
-         c.t("no external Blob volume mounted", "未挂外部 Blob 卷")],
+         c.t("no external volume in the session pod", "会话 pod 未挂外部卷"),
+         c.t("no external volume (templates and snapshots stay on the host VM's OS disk)",
+             "不挂外部卷（模板和快照存在宿主 VM 的系统盘上）")],
+        [c.t("└ volume overhead", "└ 子项：挂卷附加耗时"),
+         c.t(f"+{num(m['a.blob_mount_overhead']['value'])} s median vs image only (create → Running {c.med('a.create')}); "
+             "Memory snapshots need no volume",
+             f"比仅镜像多 +{num(m['a.blob_mount_overhead']['value'])} s 中位数（create → Running {c.med('a.create')}）；"
+             "Memory 快照无需挂卷"),
+         c.t("none", "无"),
+         c.t(f"not separable: no run without the PVC (apply → Ready {num(m['c.apply_ready']['value'])} s includes it, n=1)",
+             f"无法拆出：没有不挂 PVC 的实测（apply → Ready {num(m['c.apply_ready']['value'])} s 已包含挂卷，n=1）"),
+         c.t("none", "无"),
+         c.t("none", "无")],
         [c.t("**Follow-up turn, same session**", "**同一会话的后续回答**"),
-         c.med("a.warm"), c.t(c.vals("b.warm_gateway") + "; model route: gateway (APIM)",
-                             c.vals("b.warm_gateway") + "；模型路由：gateway（APIM）"),
+         c.med("a.warm"),
+         c.t(f"{c.vals('b.warm_gateway')} (`b-2026-09-27`, gateway model route); "
+             f"{c.med('b.sess.warm')} (`b-2026-10-15-sessions`, direct model route)",
+             f"{c.vals('b.warm_gateway')}（`b-2026-09-27`，gateway 模型路由）；"
+             f"{c.med('b.sess.warm')}（`b-2026-10-15-sessions`，direct 模型路由）"),
          c.one("c.warm"), c.med("d.warm"),
          c.t(f"{c.med('e.warm')} (A protocol); {c.med('e.d_warm')} (D protocol); "
              f"on-host sandbox command {c.rng_n('e.bench20.warm_cmd')}",
@@ -176,8 +198,9 @@ def b_comparison(c: Ctx) -> str:
              f"(n={m['a.attr.resume_small']['n']}, no volume), {c.med('a.resume')} (with Blob volume)",
              f"停止 {c.med('a.stop')}；恢复 → Running 不挂卷 {rng(m['a.attr.resume_small'])} s"
              f"（n={m['a.attr.resume_small']['n']}），带 Blob 卷 {c.med('a.resume')}"),
-         c.t("idle timeout (120–3600 s, default 900 s) or explicit `POST .../sessions/{id}:stop` releases compute and persists `$HOME` (no memory snapshot)",
-             "空闲超时（120–3600 s，默认 900 s）或显式调用 `POST .../sessions/{id}:stop` 释放算力并保留 `$HOME`（无内存快照）"),
+         c.t(f"`:stop` → idle {c.med('b.sess.stop')}; compute released, `$HOME` kept, no memory snapshot; "
+             "wakes on the next request (next row)",
+             f"`:stop` → idle {c.med('b.sess.stop')}；释放算力、保留 `$HOME`，无内存快照；下一次请求时唤醒（见下一行）"),
          c.t(f"suspend → pod gone {num(m['c.suspend']['value'])} s (n=1); resume → Ready "
              f"{num(m['c.resume_ready']['value'])} s, LoadBalancer healthy {num(m['c.resume_lb']['value'])} s (n=1)",
              f"挂起 → pod 消失 {num(m['c.suspend']['value'])} s（n=1）；恢复 → Ready "
@@ -190,8 +213,11 @@ def b_comparison(c: Ctx) -> str:
         [c.t("**Resume request → first answer (stop excluded)**", "**发起恢复 → 第一个回答（不含停止）**"),
          c.t(c.med("a.recover") + f"; separately reported resume-only median {num(m['a.resume']['median'])} s",
              c.med("a.recover") + f"；恢复本身另行统计的中位数 {num(m['a.resume']['median'])} s"),
-         c.t("next call with same `agent_session_id` reprovisions compute and restores `$HOME` and `/files` ([session docs](https://learn.microsoft.com/azure/foundry/agents/how-to/manage-hosted-sessions#stop-a-session))",
-             "带同一 `agent_session_id` 的下次请求自动重配算力并恢复 `$HOME` 与 `/files`（[会话文档](https://learn.microsoft.com/azure/foundry/agents/how-to/manage-hosted-sessions#stop-a-session)）"),
+         c.t(f"{c.med('b.sess.resume')}: the next turn on the stopped session gets new compute with `$HOME` restored; "
+             f"file written before the stop read back {k['files']}/{k['n']}, question count kept growing "
+             f"{k['conversation']}/{k['n']}",
+             f"{c.med('b.sess.resume')}：停止后同一会话的下一轮请求分到新算力并恢复 `$HOME`；"
+             f"停止前写入的文件读回 {k['files']}/{k['n']}，问题计数持续增长 {k['conversation']}/{k['n']}"),
          c.t(f"{num(m['c.resume_answer']['value'])} s (n=1; Ready {num(m['c.resume_ready']['value'])} s, "
              f"LoadBalancer healthy {num(m['c.resume_lb']['value'])} s)",
              f"{num(m['c.resume_answer']['value'])} s（n=1；Ready {num(m['c.resume_ready']['value'])} s，"
@@ -200,8 +226,10 @@ def b_comparison(c: Ctx) -> str:
          c.t(c.med("e.recover") + f"; separately reported resume-only median {num(m['e.resume']['median'])} s",
              c.med("e.recover") + f"；恢复本身另行统计的中位数 {num(m['e.resume']['median'])} s")],
         [c.t("**Pod or sandbox lost → ready again**", "**pod 或沙箱丢失 → 重新就绪**"),
-         c.t("not exercised (service-managed)", "未测（服务托管）"),
-         c.t("not exercised (managed)", "未测（平台托管）"),
+         c.t("not exercisable: no API injects host loss, and deleting a sandbox ends it",
+             "无法从外部制造：没有注入宿主机故障的接口，删除沙箱即结束会话"),
+         c.t("not exercisable: no API kills only a session's sandbox; explicit stop and resume are above",
+             "无法从外部制造：没有只杀掉会话沙箱的接口；显式停止与恢复见上方"),
          c.t(c.one("c.pod_lost") + "; same Sandbox state restored",
              c.one("c.pod_lost") + "；同一 Sandbox 的状态已恢复"),
          c.t(c.one("d.pod_lost") + "; deleted session continuity not tested",
@@ -211,10 +239,10 @@ def b_comparison(c: Ctx) -> str:
         [c.t("**Idle policy (official docs)**", "**空闲策略（官方说明）**"),
          *(claims["paths"][letter][f"idle_policy_{c.lang}"] for letter in ("A", "B", "C", "D", "E"))],
         [c.t("**Capacity**", "**容量**"),
-         c.t("serverless; default 500 concurrent active cores (2000 standard limit, 20000 in our subscription) and 3000 requests/min ([docs](https://sandboxes.azure.com/docs/sandboxes/limits)); Dynamic Sessions: 600 sessions/pool × 50 pools/region",
-             "无服务器；默认 500 并发活跃核（标准上限 2000，本订阅实查 20000）及 3000 请求/分钟（[文档](https://sandboxes.azure.com/docs/sandboxes/limits)）；动态会话：600 会话/池 × 50 池/区域"),
-         c.t("managed 1:1 per session ([docs](https://learn.microsoft.com/azure/foundry/agents/concepts/hosted-agents#scaling-and-right-sizing)); up to 20 GiB disk (20% system-reserved) and 50 MB file upload per session",
-             "平台按会话 1:1 动态创建（[文档](https://learn.microsoft.com/azure/foundry/agents/concepts/hosted-agents#scaling-and-right-sizing)）；单会话最高 20 GiB 磁盘（系统预留 20%）及 50 MB 文件上传"),
+         c.t("serverless; default 500 concurrent active cores (2000 standard limit, 20000 in our subscription) and 3000 requests/min ([docs](https://sandboxes.azure.com/docs/sandboxes/limits)); stopped sandboxes do not count",
+             "无服务器；默认 500 并发活跃核（标准上限 2000，本订阅实查 20000）及 3000 请求/分钟（[文档](https://sandboxes.azure.com/docs/sandboxes/limits)）；已停止的沙箱不计入"),
+         c.t("one VM-isolated sandbox per session, scaled per session with no replica count or warm pool to configure ([docs](https://learn.microsoft.com/azure/foundry/agents/concepts/hosted-agents#scaling-and-right-sizing)); up to 20 GiB disk per session (20% system-reserved) and 50 MB per uploaded file",
+             "每个会话一个 VM 隔离的沙箱，按会话扩缩，没有副本数或预热池可配置（[文档](https://learn.microsoft.com/azure/foundry/agents/concepts/hosted-agents#scaling-and-right-sizing)）；单会话最高 20 GiB 磁盘（系统预留 20%），单个上传文件最大 50 MB"),
          c.t("your Kata node pool", "你的 Kata 节点池"),
          c.t(f"observed at most {m['d.capacity']['per_node']} per {m['d.capacity']['node_sku']} node; "
              f"{m['d.capacity']['max_sessions']} on {m['d.capacity']['n']} nodes; "
@@ -222,12 +250,20 @@ def b_comparison(c: Ctx) -> str:
              f"单个 {m['d.capacity']['node_sku']} 节点观察到最多 {m['d.capacity']['per_node']} 个会话；"
              f"{m['d.capacity']['n']} 个节点共 {m['d.capacity']['max_sessions']} 个；"
              + "、".join(f"`{code}`" for n in (4, 8) for code in m[f'd.c{n}']['refused_codes'])),
-         c.t(f"4 at once {m['e.c4']['answered']}/{m['e.c4']['n']}, 8 at once {m['e.c8']['answered']}/{m['e.c8']['n']} "
-             f"on {m['e.capacity']['n']} {m['e.capacity']['node_sku']} VM "
-             f"({m['e.capacity']['max_sessions']} live Firecracker micro-VMs)",
-             f"4 并发 {m['e.c4']['answered']}/{m['e.c4']['n']}、8 并发 {m['e.c8']['answered']}/{m['e.c8']['n']} "
-             f"在 {m['e.capacity']['n']} 台 {m['e.capacity']['node_sku']} VM 上全部成功"
-             f"（共 {m['e.capacity']['max_sessions']} 个并发 Firecracker micro-VM）")],
+         c.t(f"one machine per install, by design ([E2B](https://github.com/e2b-dev/runtime/blob/"
+             f"588e5b9500b0987bc5a700d91483b03f0ae7d2a2/embed/README.md#when-one-node-is-not-enough)); "
+             f"2026-10-14 on 1 {m['e.capacity']['node_sku']} VM: 4 at once {m['e.c4']['answered']}/{m['e.c4']['n']}, "
+             f"8 at once {m['e.c8']['answered']}/{m['e.c8']['n']}; 2026-10-15 on one host "
+             f"{m['e.multi.one_host']['answered']}/{m['e.multi.one_host']['n']} and on two independent hosts "
+             f"{m['e.multi.two_hosts']['answered']}/{m['e.multi.two_hosts']['n']}; the default hugepage pool held "
+             f"{m['e.multi.idle']['max']} `base` sandboxes per host",
+             f"每套安装只有一台机器，这是设计如此（[E2B](https://github.com/e2b-dev/runtime/blob/"
+             f"588e5b9500b0987bc5a700d91483b03f0ae7d2a2/embed/README.md#when-one-node-is-not-enough)）；"
+             f"2026-10-14 在 1 台 {m['e.capacity']['node_sku']} VM 上：4 并发 {m['e.c4']['answered']}/{m['e.c4']['n']}、"
+             f"8 并发 {m['e.c8']['answered']}/{m['e.c8']['n']}；2026-10-15 单台 "
+             f"{m['e.multi.one_host']['answered']}/{m['e.multi.one_host']['n']}、两台独立主机 "
+             f"{m['e.multi.two_hosts']['answered']}/{m['e.multi.two_hosts']['n']}；默认大页池每台最多放下 "
+             f"{m['e.multi.idle']['max']} 个 `base` 沙箱")],
         [c.t("**Path setup in our run**", "**本次路径部署耗时**"),
          c.t(f"{num(m['a.setup']['value'])} s (sandbox group, VNet connection, disk image, volume, sandbox)",
              f"{num(m['a.setup']['value'])} s（sandbox group、VNet 连接、磁盘镜像、卷、沙箱）"),
@@ -252,6 +288,14 @@ def b_comparison(c: Ctx) -> str:
         f"自动挂起设置为 {spec['auto_suspend_seconds']} s。D 最早的 pod 在创建至少 "
         f"{m['d.idle']['value']} min 后仍为 Running；这是 pod 的年龄，不是空闲时长或回收超时。")
     return table(head, rows) + "\n" + observation + "\n"
+
+
+CI_TEMPLATE_URL = "https://github.com/e2b-dev/code-interpreter/tree/162a2a25b6a5ea5806749a437b96cbdc5bfc087e/template"
+
+
+def ci_passed(m: dict) -> int:
+    ci = m["e.latest.ci"]
+    return sum(v["passed"] == ci["n"] for v in ci["steps"].values())
 
 
 def b_runs(c: Ctx) -> str:
@@ -284,6 +328,15 @@ def b_runs(c: Ctx) -> str:
              f"follow-ups {', '.join(num(v) for v in m['b.warm_gateway']['values'])} s",
              f"部署 {num(m['b.deploy']['value'])} s；新会话 {num(m['b.cold_gateway']['value'])} s；后续 "
              f"{', '.join(num(v) for v in m['b.warm_gateway']['values'])} s")],
+        ["`b-2026-10-15-sessions`", "B", c.t("explicit session lifecycle, 3 runs", "显式会话生命周期，跑 3 次"),
+         c.t(f"create → active {num(m['b.sess.create']['median'])} s, first answer {num(m['b.sess.first']['median'])} s, "
+             f"follow-up {num(m['b.sess.warm']['median'])} s, stop → idle {num(m['b.sess.stop']['median'])} s, "
+             f"resume → answer {num(m['b.sess.resume']['median'])} s (medians); file kept "
+             f"{m['b.sess.state_kept']['files']}/{m['b.sess.state_kept']['n']}",
+             f"创建 → active {num(m['b.sess.create']['median'])} s、第一个回答 {num(m['b.sess.first']['median'])} s、"
+             f"后续 {num(m['b.sess.warm']['median'])} s、停止 → idle {num(m['b.sess.stop']['median'])} s、"
+             f"恢复到回答 {num(m['b.sess.resume']['median'])} s（中位数）；文件保留 "
+             f"{m['b.sess.state_kept']['files']}/{m['b.sess.state_kept']['n']}")],
         ["`c-2026-09-27`", "C", c.t("Kata Sandbox, pod loss, suspend/resume", "Kata Sandbox、pod 丢失、挂起/恢复"),
          c.t(f"pod kernel `{m['c.isolation']['guest_kernel']}` vs runc pod on the Ubuntu system pool "
              f"`{m['c.isolation']['system_node_kernel']}`; "
@@ -311,12 +364,12 @@ def b_runs(c: Ctx) -> str:
          c.t(f"create {num(m['e.create']['median'])} s (on host {rng(m['e.bench20.create'])} s), "
              f"cold {num(m['e.cold']['median'])} s, warm {num(m['e.warm']['median'])} s, "
              f"resume → answer {num(m['e.recover']['median'])} s (medians); "
-             f"vmm `{m['e.vmm']['value']}` in {m['e.vmm']['count']}/{m['e.vmm']['n']}; "
+             f"VMM `{m['e.vmm']['value']}` in the host's process list; "
              f"history grew {m['e.state_kept']['count']}/{m['e.state_kept']['n']}",
              f"创建 {num(m['e.create']['median'])} s（本机 {rng(m['e.bench20.create'])} s）、"
              f"冷启动 {num(m['e.cold']['median'])} s、后续 {num(m['e.warm']['median'])} s、"
              f"恢复到回答 {num(m['e.recover']['median'])} s（中位数）；"
-             f"{m['e.vmm']['count']}/{m['e.vmm']['n']} 次 vmm 为 `{m['e.vmm']['value']}`；"
+             f"宿主机进程列表里的 VMM 为 `{m['e.vmm']['value']}`；"
              f"历史持续增长 {m['e.state_kept']['count']}/{m['e.state_kept']['n']}")],
         ["`e-2026-10-14-perf`", "E", c.t("cold, warm, 4 and 8 at once, replacement", "冷启动、后续、4 和 8 并发、沙箱替换"),
          c.t(f"cold {num(m['e.d_cold']['median'])} s, warm {num(m['e.d_warm']['median'])} s (medians); "
@@ -325,6 +378,29 @@ def b_runs(c: Ctx) -> str:
              f"冷启动 {num(m['e.d_cold']['median'])} s、后续 {num(m['e.d_warm']['median'])} s（中位数）；"
              f"4 并发 {m['e.c4']['answered']}/{m['e.c4']['n']}、8 并发 {m['e.c8']['answered']}/{m['e.c8']['n']} 回答；"
              f"{num(m['e.pod_lost']['value'])} s 后替代沙箱就绪")],
+        ["`e-2026-10-15-latest`", "E", c.t("newest SDK; E2B's official code-interpreter template",
+                                           "最新 SDK；E2B 官方 code-interpreter 模板"),
+         c.t(f"e2b 2.56.0: history grew {m['e.latest.sdk.state_kept']['count']}/{m['e.latest.sdk.state_kept']['n']}, "
+             f"create {num(m['e.latest.sdk.create']['median'])} s, resume {num(m['e.latest.sdk.resume']['median'])} s "
+             f"(medians); code-interpreter built only after raising three host defaults; "
+             f"{ci_passed(m)}/{len(m['e.latest.ci']['steps'])} checks passed in "
+             f"{m['e.latest.ci']['n']}/{m['e.latest.ci']['n']} runs, JavaScript failed in all",
+             f"e2b 2.56.0：历史持续增长 {m['e.latest.sdk.state_kept']['count']}/{m['e.latest.sdk.state_kept']['n']}，"
+             f"创建 {num(m['e.latest.sdk.create']['median'])} s、恢复 {num(m['e.latest.sdk.resume']['median'])} s"
+             f"（中位数）；code-interpreter 调大三项宿主机默认值后才建成；"
+             f"{len(m['e.latest.ci']['steps'])} 项检查中 {ci_passed(m)} 项在 {m['e.latest.ci']['n']}/"
+             f"{m['e.latest.ci']['n']} 次都通过，JavaScript 每次都失败")],
+        ["`e-2026-10-15-multi`", "E", c.t("two independent E2B hosts: second host, at once, idle, host stop",
+                                          "两台独立 E2B 主机：第二台、并发、空闲容量、停一台"),
+         c.t(f"host b: history grew {m['e.multi.b.state_kept']['count']}/{m['e.multi.b.state_kept']['n']}, "
+             f"create {num(m['e.multi.b.create']['median'])} s; at once {m['e.multi.one_host']['answered']}/"
+             f"{m['e.multi.one_host']['n']} on one host, {m['e.multi.two_hosts']['answered']}/"
+             f"{m['e.multi.two_hosts']['n']} on two; with host a's stack stopped, host b kept serving and "
+             f"host a's paused sandbox could not resume on host b",
+             f"host b：历史持续增长 {m['e.multi.b.state_kept']['count']}/{m['e.multi.b.state_kept']['n']}，"
+             f"创建 {num(m['e.multi.b.create']['median'])} s；并发：单台 {m['e.multi.one_host']['answered']}/"
+             f"{m['e.multi.one_host']['n']}，两台 {m['e.multi.two_hosts']['answered']}/{m['e.multi.two_hosts']['n']}；"
+             "停掉 host a 的 E2B 后，host b 照常服务，host a 上暂停的沙箱在 host b 上恢复不了")],
     ]
     order = json.loads((ROOT / "evidence" / "claims.json").read_text(encoding="utf-8")).get("run_order")
     if not isinstance(order, list) or not all(isinstance(rid, str) for rid in order):
@@ -436,6 +512,39 @@ def v_b(c: Ctx) -> str:
             [c.t("new session → answer", "新会话 → 回答"), "direct", num(d["new_session_seconds"])],
             [c.t("follow-up turns", "后续回答"), "direct", ", ".join(num(v) for v in d["warm_seconds"])]]
     return table(head, rows, ["---", "---", "---:"])
+
+
+def v_b_sessions(c: Ctx) -> str:
+    s = c.runs["b-sessions-2026-10-15/sessions.json"]
+    head = [c.t("Run", "次"), c.t("Create → active", "创建 → active"), c.t("First answer", "第一个回答"),
+            c.t("Follow-up", "后续"), c.t("Stop → idle", "停止 → idle"), c.t("Answer after stop", "停止后回答"),
+            c.t("Next answer", "再下一轮"), c.t("File kept", "文件保留"), c.t("Answers", "回答")]
+    rows = []
+    for r in s["runs"]:
+        create = r["create"]["total_s"] + ((r["create"].get("wait_active") or {}).get("seconds") or 0)
+        stop = r["stop"]["total_s"] + r["stop"]["wait_stopped"]["seconds"]
+        answers = " / ".join(str(r[k]["response"]) for k in ("first", "warm", "resume", "warm_after_resume"))
+        rows.append([str(r["run"]), num(round(create, 3)), num(r["first"]["total_s"]), num(r["warm"]["total_s"]),
+                     num(round(stop, 3)), num(r["resume"]["total_s"]), num(r["warm_after_resume"]["total_s"]),
+                     c.t("yes", "是") if r["marker_after_resume"]["matches"] is True else c.t("no", "否"), answers])
+    m = c.m
+    rows.append([c.t("**median**", "**中位数**")] + [f"**{num(m[k]['median'])}**" for k in
+                 ("b.sess.create", "b.sess.first", "b.sess.warm", "b.sess.stop", "b.sess.resume",
+                  "b.sess.warm_after_resume")] + ["", ""])
+    codes: dict[str, int] = {}
+    for e in s["http_log"]:
+        codes[str(e["status"])] = codes.get(str(e["status"]), 0) + 1
+    retried = sum(len(v["attempts"]) > 1 for r in s["runs"] for v in r.values()
+                  if isinstance(v, dict) and isinstance(v.get("attempts"), list))
+    en_codes = ", ".join(f"{code} ×{n}" for code, n in sorted(codes.items()))
+    zh_codes = "、".join(f"{code} ×{n}" for code, n in sorted(codes.items()))
+    tail = c.t(f"\n{len(s['http_log'])} HTTP attempts: {en_codes}; "
+               + ("none retried" if not retried else f"{retried} calls retried") + ".\n",
+               f"\n共 {len(s['http_log'])} 次 HTTP 尝试：{zh_codes}；"
+               + ("没有重试" if not retried else f"{retried} 次调用有重试") + "。\n")
+    return c.t("Seconds, client wall time; the last column is the agent's replies in order.\n\n",
+               "单位为秒，客户端计时；最后一列是 agent 依次给出的回答。\n\n") + \
+        table(head, rows, ["---"] + ["---:"] * 6 + ["---", "---"]) + tail
 
 
 def v_c(c: Ctx) -> str:
@@ -586,7 +695,14 @@ def v_e_agent_input(c: Ctx) -> str:
                  "Firecracker memory + disk snapshot via `beta_pause`).",
                  f"宿主机 VM：{ea['host_vm_sku']}；E2B `base` 模板（{iso['vcpus']} vCPU，{iso['memory_mb']} MB，"
                  "经 `beta_pause` 保存 Firecracker 内存+磁盘快照）。"),
+             c.t(f"Versions: E2B Python SDK `{ea['sdk']}`; E2B Embed runtime `{ea['e2b_runtime_commit'][:7]}`.",
+                 f"版本：E2B Python SDK `{ea['sdk']}`；E2B Embed 运行时 `{ea['e2b_runtime_commit'][:7]}`。"),
              c.t(f"Request: {i['request']}.", f"请求：{i['request']}。"),
+             c.t(f"Agent instructions: \"{ea['agent']['instructions']}\"", f"Agent 指令：\"{ea['agent']['instructions']}\""),
+             c.t(f"Its one function tool `{ea['agent']['tools'][0]['name']}(python_code)`: "
+                 f"\"{ea['agent']['tools'][0]['description']}\"",
+                 f"唯一的函数工具 `{ea['agent']['tools'][0]['name']}(python_code)`："
+                 f"\"{ea['agent']['tools'][0]['description']}\""),
              c.t(f"First answer: \"{i['first']}\"", f"第一个问题：\"{i['first']}\""),
              c.t(f"Every later turn: \"{i['warm']}\"", f"之后每一轮：\"{i['warm']}\"")]
     return quote(lines)
@@ -610,13 +726,13 @@ def v_e_agent(c: Ctx) -> str:
     iso = ea["isolation_check"]
     tail = c.t(f"\nOn-host 20-sandbox microbenchmark (zero WAN RTT): create {c.rng_n('e.bench20.create')}, "
                f"warm command {c.rng_n('e.bench20.warm_cmd')}, pause {c.rng_n('e.bench20.pause')}, "
-               f"resume {c.rng_n('e.bench20.resume')}. Read inside the sandbox: VMM `{iso['vmm_type']}` "
-               f"`{iso['firecracker_version']}`, guest kernel `{iso['guest_kernel']}`, "
-               f"host kernel `{iso['host_kernel']}`.\n",
+               f"resume {c.rng_n('e.bench20.resume')}. VMM `{iso['vmm_type']}` `{iso['firecracker_version']}` "
+               f"from the host's process list; guest kernel `{iso['guest_kernel']}` from `uname -r` inside the "
+               f"sandbox; host kernel `{iso['host_kernel']}`.\n",
                f"\n本机 20 次沙箱微基准（零跨网 RTT）：创建 {c.rng_n('e.bench20.create')}，"
                f"热命令 {c.rng_n('e.bench20.warm_cmd')}，暂停 {c.rng_n('e.bench20.pause')}，"
-               f"恢复 {c.rng_n('e.bench20.resume')}。沙箱内读回：VMM `{iso['vmm_type']}` "
-               f"`{iso['firecracker_version']}`，guest 内核 `{iso['guest_kernel']}`，"
+               f"恢复 {c.rng_n('e.bench20.resume')}。VMM `{iso['vmm_type']}` `{iso['firecracker_version']}` "
+               f"来自宿主机进程列表；guest 内核 `{iso['guest_kernel']}` 来自沙箱内的 `uname -r`；"
                f"宿主机内核 `{iso['host_kernel']}`。\n")
     return table(head, rows, ["---"] + ["---:"] * 8 + ["---"]) + tail
 
@@ -624,13 +740,22 @@ def v_e_agent(c: Ctx) -> str:
 def v_e_perf_input(c: Ctx) -> str:
     ep = c.runs["e-e2b-2026-10-14/perf.json"]
     i = ep["inputs"]
-    lines = [c.t(f"Request: {ep['request']}.", f"请求：{ep['request']}。"),
+    driver = next(s for s in ep["_sources"] if s["role"] == "benchmark driver")
+    w = i["warm"]
+    lines = [c.t(f"Request: {ep['request']}; agent instructions and tool as in `e-2026-10-14-agent`.",
+                 f"请求：{ep['request']}；agent 指令和工具与 `e-2026-10-14-agent` 相同。"),
              c.t(f"New sessions: \"{i['cold']}\" (n = 1, 2, 3, 4, 5)", f"新会话：\"{i['cold']}\"（n = 1、2、3、4、5）"),
-             c.t(f"One session: \"{i['warm_first']}\", then \"{i['warm_followup_1']}\", then \"{i['warm_followup_n']}\" "
-                 "(n = 1, 2)",
-                 f"同一会话：\"{i['warm_first']}\"，然后 \"{i['warm_followup_1']}\"，再 \"{i['warm_followup_n']}\"（n = 1、2）"),
-             c.t(f"At once, per session: \"{i['scale_turn1']}\", then \"{i['scale_turn2']}\"",
-                 f"并发时每个会话：\"{i['scale_turn1']}\"，然后 \"{i['scale_turn2']}\"")]
+             c.t(f"One session: \"{w[0]}\", then \"{w[1]}\", then \"{w[2]}\", then \"{w[3]}\"",
+                 f"同一会话：\"{w[0]}\"，然后 \"{w[1]}\"，再 \"{w[2]}\"，再 \"{w[3]}\""),
+             c.t(f"At once, per session: \"{i['scale'][0]}\", then \"{i['scale'][1]}\"",
+                 f"并发时每个会话：\"{i['scale'][0]}\"，然后 \"{i['scale'][1]}\""),
+             c.t(f"Replacement: a live session ran \"{i['recovery'][0]}\"; after another sandbox was killed and "
+                 f"replaced, it ran \"{i['recovery'][1]}\"",
+                 f"替换：一个存活会话先发 \"{i['recovery'][0]}\"；另一个沙箱被删除并替换后，再发 \"{i['recovery'][1]}\""),
+             c.t(f"Driver: the author's private script `{driver['file']}` (SHA-256 `{driver['sha256'][:12]}…` in the "
+                 "record); `tools/measure_e2b.py perf` sends the same prompts with the same agent and clocks.",
+                 f"驱动：作者的私有脚本 `{driver['file']}`（SHA-256 `{driver['sha256'][:12]}…` 记在记录里）；"
+                 "`tools/measure_e2b.py perf` 用同样的 agent、问题和计时。")]
     return quote(lines)
 
 
@@ -651,10 +776,10 @@ def v_e_cold(c: Ctx) -> str:
 def v_e_warm(c: Ctx) -> str:
     ep = c.runs["e-e2b-2026-10-14/perf.json"]
     head = [c.t("Turn", "轮次"), c.t("Answer", "回答"), c.t("Sandbox tool, s", "沙箱工具耗时，s"),
-            c.t("Client wall, s", "客户端耗时，s")]
+            c.t("Turn, s", "轮次耗时，s")]
     rows = []
     for k, t in enumerate(ep["warm_turns"]):
-        label = c.t("1 (new session)", "1（新会话）") if k == 0 else str(k + 1)
+        label = c.t("1 (new session; includes the sandbox create)", "1（新会话；含沙箱创建）") if k == 0 else str(k + 1)
         rows.append([label, t["answer"], num(t["sandbox_tool_s"]), num(t["wall_s"])])
     return table(head, rows, ["---", "---", "---:", "---:"])
 
@@ -662,30 +787,332 @@ def v_e_warm(c: Ctx) -> str:
 def v_e_scale(c: Ctx) -> str:
     m = c.m
     head = [c.t("At once", "并发"), c.t("Answered", "回答"), c.t("Refused", "拒绝"),
-            c.t("Live Firecracker VMs", "并发 Firecracker VM 数"), c.t("Turn 1 wall, s", "第 1 轮耗时，s")]
+            c.t("Sandbox create + turn 1, s", "沙箱创建 + 第 1 轮，s")]
     rows = []
     for n in (4, 8):
         r = c.m[f"e.c{n}"]
         rows.append([str(n), f"{r['answered']}/{r['n']}", f"{r['refused']}/{r['n']}",
-                     str(r["max_live_vms"]), ", ".join(num(v) for v in r["answered_s"])])
+                     ", ".join(num(v) for v in r["answered_s"])])
     rec = c.runs["e-e2b-2026-10-14/perf.json"]["recovery"]
     f = rec["followup_on_live_session"]
     tail = c.t(f"\nSandbox replacement after `kill`: new Firecracker sandbox Ready in {num(rec['replacement_ready_s'])} s; "
                f"follow-up on a live session HTTP {f['http']}, {num(f['wall_s'])} s, \"{f['answer']}\", "
-               f"state preserved: {str(f['state_preserved']).lower()}.\n",
+               f"state preserved: {str(f['state_preserved']).lower()}. No count of live micro-VMs is published for "
+               "this run: the driver counted them with `pgrep -fc`, which also counted its own shell.\n",
                f"\n`kill` 删除沙箱后的替换：新 Firecracker 沙箱在 {num(rec['replacement_ready_s'])} s 内就绪；"
                f"另一个存活会话的追问 HTTP {f['http']}，{num(f['wall_s'])} s，\"{f['answer']}\"，"
-               f"保留状态：{str(f['state_preserved']).lower()}。\n")
-    return table(head, rows, ["---:", "---", "---", "---:", "---"]) + tail
+               f"保留状态：{str(f['state_preserved']).lower()}。本次不公布同时运行的 micro-VM 数：驱动用 `pgrep -fc` "
+               "计数，把它自己的 shell 也算了进去。\n")
+    return table(head, rows, ["---:", "---", "---", "---"]) + tail
+
+
+def e_turn_table(c: Ctx, runs_: list[dict], prefix: str) -> str:
+    head = [c.t("Run", "次"), c.t("Create → Running", "创建 → Running"), c.t("First answer", "第一个回答"),
+            c.t("Cold", "冷启动"), c.t("Follow-up", "后续"), c.t("Pause", "暂停"), c.t("Resume", "恢复"),
+            c.t("Answer after resume", "恢复后回答"), c.t("Resume → answer", "恢复 → 回答"), c.t("Answers", "回答")]
+    rows = []
+    for r in runs_:
+        answers = " / ".join(str(r[k]["response"]) for k in ("first", "warm", "first_after_resume", "warm_after_resume"))
+        rows.append([str(r["run"]), num(r["create_total_s"]), num(r["first"]["wall_s"]), num(r["cold_total_s"]),
+                     num(r["warm"]["wall_s"]), num(r["stop_total_s"]), num(r["resume_total_s"]),
+                     num(r["first_after_resume"]["wall_s"]), num(r["recover_total_s"]), answers])
+    m = c.m
+    rows.append([c.t("**median**", "**中位数**")] + [f"**{num(m[f'{prefix}.{k}']['median'])}**" for k in
+                 ("create", "first", "cold", "warm", "pause", "resume", "first_after_resume", "recover")] + [""])
+    return table(head, rows, ["---"] + ["---:"] * 8 + ["---"])
+
+
+def v_e_multi_input(c: Ctx) -> str:
+    mu = c.runs["e-e2b-2026-10-15/multi.json"]
+    i, t = mu["inputs"], mu["tool"]
+    lines = [c.t(f"Tool: `{t['file']}` (SHA-256 `{t['sha256'][:12]}…`); the agent runs on host b used the revision "
+                 f"`{t['agent_runs_revision_sha256'][:12]}…`, which did not yet record HTTP statuses. Agent instructions, "
+                 "tool schema and prompts as in `e-2026-10-14-agent` and `e-2026-10-14-perf`.",
+                 f"工具：`{t['file']}`（SHA-256 `{t['sha256'][:12]}…`）；host b 上的 agent 实测用的是前一版 "
+                 f"`{t['agent_runs_revision_sha256'][:12]}…`，那一版还不记录 HTTP 状态。agent 指令、工具定义和问题与 "
+                 "`e-2026-10-14-agent`、`e-2026-10-14-perf` 相同。")]
+    install = {
+        "a": c.t("installed on 2026-10-14 for `e-2026-10-14-agent`, deallocated overnight, then started and brought up "
+                 "once with `docker compose up -d --wait`, as E2B's guide asks after a reboot",
+                 "2026-10-14 为 `e-2026-10-14-agent` 安装，夜间释放；开机后按 E2B 指南对重启的要求执行一次 "
+                 "`docker compose up -d --wait`"),
+        "b": c.t(f"installed on 2026-10-15 with README step 7 (`compose.yaml` and `.env` at `588e5b9`, both SHA-256 OK) "
+                 f"in {mu['hosts']['b']['install_time']['total_s']} s",
+                 f"2026-10-15 按 README 第 7 步安装（`588e5b9` 的 `compose.yaml` 和 `.env`，SHA-256 均校验通过），用时 "
+                 f"{mu['hosts']['b']['install_time']['total_s']} s")}
+    for name in ("a", "b"):
+        h = mu["hosts"][name]
+        disk = h["os_disk"].replace(", ", " · ")
+        lines.append(c.t(f"Host {name}: `{h['vm_sku']}`, zone `{h['zone']}`, host kernel `{h['host_kernel']}`, Docker "
+                         f"`{h['docker']}`, OS disk `{disk}`, `HUGEPAGES={h['hugepages']}`; {install[name]}.",
+                         f"Host {name}：`{h['vm_sku']}`，zone `{h['zone']}`，宿主机内核 `{h['host_kernel']}`，Docker "
+                         f"`{h['docker']}`，系统盘 `{disk}`，`HUGEPAGES={h['hugepages']}`；{install[name]}。"))
+    lines += [c.t("Network: both hosts in one subnet and zone; the tool ran on host a and reached host b's ports `3000` "
+                  "and `3002` over the private network; host b's NSG admitted only host a's private address on those "
+                  "two ports and no other inbound traffic.",
+                  "网络：两台主机在同一子网和可用区；工具在 host a 上运行，经私网访问 host b 的 `3000` 和 `3002` 端口；"
+                  "host b 的 NSG 只允许 host a 的私网地址访问这两个端口，不放行其他入站流量。"),
+              c.t(f"Agent runs on host b: \"{i['first']}\", then \"{i['count']}\" 3 times, pausing for "
+                  f"{i['resume_wait_s']} s after the second turn.",
+                  f"host b 上的 agent 实测：\"{i['first']}\"，然后 3 次 \"{i['count']}\"，第二轮后暂停 "
+                  f"{i['resume_wait_s']} s。"),
+              c.t(f"One host at once, on host a: 8 sessions; new session \"{i['cold'].format(i=1)}\" and one session "
+                  f"with \"{i['warm'][0]}\" before it.",
+                  f"单台并发（host a）：8 个会话；在此之前先跑一个新会话 \"{i['cold'].format(i=1)}\" 和一个以 "
+                  f"\"{i['warm'][0]}\" 开头的会话。"),
+              c.t(f"At once, per session: \"{i['scale'][0]}\", then \"{i['scale'][1]}\".",
+                  f"并发时每个会话：\"{i['scale'][0]}\"，然后 \"{i['scale'][1]}\"。"),
+              c.t(f"Host stop: on each host one live session (\"{i['live'][0]}\") and one paused sandbox "
+                  f"(\"{i['paused'][0]}\", `{{h}}` = the host's name); then `docker compose stop` on host a with the VM "
+                  f"running, later `docker compose up -d --wait`; reads back \"{i['live'][1]}\" and "
+                  f"\"{i['paused'][1]}\".",
+                  f"停一台：每台各有一个存活会话（\"{i['live'][0]}\"）和一个暂停的沙箱（\"{i['paused'][0]}\"，"
+                  f"`{{h}}` 为主机名）；然后在 host a 上执行 `docker compose stop`（VM 不关），之后再 "
+                  f"`docker compose up -d --wait`；读回时发 \"{i['live'][1]}\" 和 \"{i['paused'][1]}\"。"),
+              c.t("Idle capacity: `Sandbox.create(\"base\")` on host a, one after another with no model and no "
+                  "command, until a create was refused, 3 times.",
+                  "空闲容量：在 host a 上逐个 `Sandbox.create(\"base\")`，不调模型、不跑命令，直到创建被拒，共 3 次。")]
+    return quote(lines)
+
+
+def v_e_multi_agent(c: Ctx) -> str:
+    mu = c.runs["e-e2b-2026-10-15/multi.json"]
+    rr = mu["agent_runs_host_b"]
+    slow = max(rr, key=lambda r: r["cold_total_s"])
+    tail = c.t(f"\nHistory inside the sandbox grew 1, 2, 3, 4 in {c.m['e.multi.b.state_kept']['count']} of "
+               f"{len(rr)} runs. Run {slow['run']}'s slow turns were model turns: its first answer took "
+               f"{num(slow['first']['wall_s'])} s, of which the sandbox command took "
+               f"{num(slow['first']['sandbox_tool_s'])} s.\n",
+               f"\n沙箱内的历史在 {len(rr)} 次中有 {c.m['e.multi.b.state_kept']['count']} 次按 1、2、3、4 增长。"
+               f"第 {slow['run']} 次慢在模型轮次：第一个回答用了 {num(slow['first']['wall_s'])} s，其中沙箱命令只占 "
+               f"{num(slow['first']['sandbox_tool_s'])} s。\n")
+    return e_turn_table(c, rr, "e.multi.b") + tail
+
+
+def v_e_multi_scale(c: Ctx) -> str:
+    mu = c.runs["e-e2b-2026-10-15/multi.json"]
+    head = [c.t("Phase", "阶段"), c.t("Sessions at once", "同时会话"), c.t("Answered", "回答"),
+            c.t("Refused", "拒绝"), c.t("Refusal cause", "拒绝原因"), c.t("Sandbox create, s", "沙箱创建，s"),
+            c.t("Whole session, s", "整个会话，s"), c.t("Model HTTP attempts", "模型 HTTP 尝试")]
+    rows = []
+    for key, level, label in (("e.multi.one_host", mu["perf_host_a"]["at_once"], c.t("host a alone", "仅 host a")),
+                              ("e.multi.two_hosts", mu["two_hosts_at_once"], c.t("hosts a and b", "host a 和 b"))):
+        r = c.m[key]
+        ok = [s for s in level["sessions"] if s.get("remembered")]
+        create = [s["sandbox_create_to_ready_s"] for s in ok]
+        sess = [s["session_s"] for s in ok]
+        per = c.t(", ".join(f"{h} {v['answered']}/{v['sessions']}" for h, v in r["per_host"].items()),
+                  "，".join(f"{h} {v['answered']}/{v['sessions']}" for h, v in r["per_host"].items()))
+        codes = ", ".join(f"{code} ×{n}" for code, n in sorted(r["model_http_statuses"].items()))
+        rows.append([label, str(r["n"]), f"{r['answered']}/{r['n']} ({per})", f"{r['refused']}/{r['n']}",
+                     f"`{r['refusal_cause']}`", f"{num(min(create), 3)}–{num(max(create), 3)}",
+                     f"{num(min(sess))}–{num(max(sess))}", codes])
+    tail = c.t("\nThe client spread the 16 sessions over the two hosts in turn. Each refusal was E2B's "
+               "`500: Failed to place sandbox`, with `cannot allocate memory` from the orchestrator behind it; the "
+               "model's 2 HTTP 500 answers were retried within their turns and those sessions answered.\n",
+               "\n客户端把 16 个会话轮流分给两台主机。每次拒绝都是 E2B 的 `500: Failed to place sandbox`，"
+               "背后是编排器的 `cannot allocate memory`；模型返回的 2 次 HTTP 500 都在同一轮内重试成功，这些会话照常回答。\n")
+    return table(head, rows, ["---", "---:", "---", "---", "---", "---:", "---:", "---"]) + tail
+
+
+def v_e_multi_idle(c: Ctx) -> str:
+    mu = c.runs["e-e2b-2026-10-15/multi.json"]
+    hp = c.m["e.multi.hugepages"]
+    head = [c.t("Run", "次"), c.t("Created before the refusal", "被拒前创建成功"), c.t("Refusal", "拒绝原因"),
+            c.t("Hugepages taken: before → at the refusal", "已占大页：开始 → 被拒时"),
+            c.t("After killing them", "全部删除后")]
+    rows = []
+    for r in mu["idle_capacity_host_a"]:
+        ok = [x for x in r["creates"] if x["ok"]]
+        rows.append([str(r["run"]), str(len(ok)), f"`{r['refusal']}`",
+                     f"{r['before']['hugepages_taken']} → {ok[-1]['hugepages_taken']}",
+                     c.t(f"{r['after_kill']['hugepages_taken']} pages, {r['after_kill']['sandboxes_left']} sandboxes",
+                         f"{r['after_kill']['hugepages_taken']} 页，{r['after_kill']['sandboxes_left']} 个沙箱")])
+    free = hp["pool"] - hp["postgres"]
+    tail = c.t(f"\nPages are 2 MiB. Each `base` sandbox (512 MiB) reserved {hp['per_sandbox']} pages when it was "
+               f"created, idle or not. The pool is {hp['pool']} pages and postgres in the Compose stack holds "
+               f"{hp['postgres']}, which leaves {free} pages: room for {hp['fit']} sandboxes. Run 1 stopped earlier "
+               "on a different error.\n",
+               f"\n每页 2 MiB。每个 `base` 沙箱（512 MiB）在创建时就预留 {hp['per_sandbox']} 页，不论是否空闲。"
+               f"大页池共 {hp['pool']} 页，Compose 栈里的 postgres 占 {hp['postgres']} 页，剩下 {free} 页，"
+               f"能放下 {hp['fit']} 个沙箱。第 1 次因为另一个错误提前停止。\n")
+    return table(head, rows, ["---:", "---:", "---", "---", "---"]) + tail
+
+
+def v_e_multi_hostloss(c: Ctx) -> str:
+    hl = c.runs["e-e2b-2026-10-15/multi.json"]["host_loss"]
+    b, a, back = hl["after_loss"]["b"], hl["after_loss"]["a"], hl["after_restart"]["a"]
+
+    def res(x: dict, value: str | None = None) -> str:
+        if x["ok"]:
+            return c.t(f"ok, {num(x['seconds'])} s", f"成功，{num(x['seconds'])} s") + (f", \"{value}\"" if value else "")
+        err = x["error"]
+        short = "connection refused" if "Connection refused" in err else err.split(":")[0] + ": " + \
+            err.split(": ", 1)[1].replace("<sandbox id>", "…")
+        return c.t(f"failed: `{short}`", f"失败：`{short}`")
+
+    rows = [[c.t("host b, live session: read its file", "host b，存活会话：读回文件"),
+             res(b["live_session_read"], b["live_session_read"].get("value"))],
+            [c.t("host b: new session", "host b：新会话"), res(b["new_session"], b["new_session"]["value"]["answer"])],
+            [c.t("host b: resume host a's paused sandbox", "host b：恢复 host a 上暂停的沙箱"),
+             res(b["connect_lost_hosts_paused_sandbox"])],
+            [c.t("host a, stopped: create", "host a 停止中：创建"), res(a["create"])],
+            [c.t("host a, stopped: resume its own paused sandbox", "host a 停止中：恢复自己暂停的沙箱"),
+             res(a["connect_own_paused_sandbox"])],
+            [c.t("host a, after restart: resume its own paused sandbox", "host a 重启后：恢复自己暂停的沙箱"),
+             res(back["resume_own_paused_sandbox"], back["resume_own_paused_sandbox"].get("value"))],
+            [c.t("host a, after restart: the sandbox that was running when it stopped",
+                 "host a 重启后：停止时正在运行的沙箱"), res(back["live_sandbox_before_loss"])],
+            [c.t("host a, after restart: new session", "host a 重启后：新会话"),
+             res(back["new_session"], back["new_session"]["value"]["answer"])],
+            [c.t("`docker compose stop` / `docker compose up -d --wait`", "`docker compose stop` / `docker compose up -d --wait`"),
+             f"{num(hl['stop']['seconds'])} s / {num(hl['start']['seconds'])} s"]]
+    return table([c.t("Check", "检查项"), c.t("Observed", "观察结果")], rows)
+
+
+def v_e_latest_input(c: Ctx) -> str:
+    la = c.runs["e-e2b-2026-10-15/latest.json"]
+    s, ci = la["sdk_check"], la["code_interpreter"]
+    r = ci["template_resources"]
+    lines = [c.t(f"SDK check: `{s['tool']['file']} {s['tool']['command']}` with `{s['sdk']}` (Python {s['python']}), "
+                 f"tool SHA-256 `{s['tool']['sha256'][:12]}…`; \"{s['inputs']['first']}\", then "
+                 f"\"{s['inputs']['count']}\" 3 times, pausing for {s['inputs']['resume_wait_s']} s after the "
+                 "second turn.",
+                 f"SDK 检查：`{s['tool']['file']} {s['tool']['command']}`，`{s['sdk']}`（Python {s['python']}），"
+                 f"工具 SHA-256 `{s['tool']['sha256'][:12]}…`；\"{s['inputs']['first']}\"，然后 3 次 "
+                 f"\"{s['inputs']['count']}\"，第二轮后暂停 {s['inputs']['resume_wait_s']} s。"),
+             c.t(f"code-interpreter: template `{ci['template']}` ({r['vcpus']} vCPU, {r['memory_mb']} MB) from "
+                 f"[`e2b-dev/code-interpreter@162a2a2`]({CI_TEMPLATE_URL}), built with its unchanged "
+                 f"`template/build_prod.py` (build environment `e2b 2.32.0`); checked with "
+                 f"`e2b-code-interpreter {ci['client']['e2b-code-interpreter']}` and `{ci['check_tool']['file']}`.",
+                 f"code-interpreter：模板 `{ci['template']}`（{r['vcpus']} vCPU，{r['memory_mb']} MB），来自 "
+                 f"[`e2b-dev/code-interpreter@162a2a2`]({CI_TEMPLATE_URL})，用其原样的 `template/build_prod.py` 构建"
+                 f"（构建环境 `e2b 2.32.0`）；用 `e2b-code-interpreter {ci['client']['e2b-code-interpreter']}` 和 "
+                 f"`{ci['check_tool']['file']}` 检查。"),
+             c.t("Cells, in order, with no model: \"x = 1\", \"x+=1; x\", a pandas sum, a matplotlib plot, JavaScript "
+                 "\"[1, 2, 3].reduce((a, b) => a + b)\", \"1/0\", then after pause and resume \"x\".",
+                 "按顺序执行的代码单元（不经模型）：\"x = 1\"、\"x+=1; x\"、pandas 求和、matplotlib 画图、JavaScript "
+                 "\"[1, 2, 3].reduce((a, b) => a + b)\"、\"1/0\"，暂停并恢复后再执行 \"x\"。")]
+    return quote(lines)
+
+
+def v_e_latest_sdk(c: Ctx) -> str:
+    la = c.runs["e-e2b-2026-10-15/latest.json"]
+    rr = la["sdk_check"]["runs"]
+    codes: dict[str, int] = {}
+    for r in rr:
+        for k in ("first", "warm", "first_after_resume", "warm_after_resume"):
+            for code in r[k]["http_statuses"]:
+                codes[str(code)] = codes.get(str(code), 0) + 1
+    joined = ", ".join(f"{code} ×{n}" for code, n in sorted(codes.items()))
+    tail = c.t(f"\nModel HTTP attempts: {joined}. History grew 1, 2, 3, 4 in "
+               f"{c.m['e.latest.sdk.state_kept']['count']} of {len(rr)} runs; no sandbox was left.\n",
+               f"\n模型 HTTP 尝试：{joined}。历史在 {len(rr)} 次中有 {c.m['e.latest.sdk.state_kept']['count']} 次按 "
+               "1、2、3、4 增长；没有遗留沙箱。\n")
+    return e_turn_table(c, rr, "e.latest.sdk") + tail
+
+
+def v_e_latest_build(c: Ctx) -> str:
+    ci = c.runs["e-e2b-2026-10-15/latest.json"]["code_interpreter"]
+    head = [c.t("Attempt", "次"), "HUGEPAGES", c.t("Build workspace, MiB", "构建工作空间，MiB"),
+            c.t("OS disk, GB", "系统盘，GB"), c.t("Result", "结果"), c.t("Seconds", "秒")]
+    why_by_attempt = {
+        1: c.t("`mmap memfd: cannot allocate memory` while resuming the build VM",
+               "恢复构建 VM 时 `mmap memfd: cannot allocate memory`"),
+        2: c.t("`pip install` in the build VM: `[Errno 28] No space left on device`",
+               "构建 VM 里的 `pip install`：`[Errno 28] No space left on device`"),
+        3: c.t("below 8 GiB free on the OS disk, which also holds the E2B database",
+               "系统盘剩余不到 8 GiB，而 E2B 的数据库也在这块盘上"),
+    }
+    rows = []
+    for b in ci["builds"]:
+        at = f"{b['step']}/{b['steps']}"
+        if b["result"] == "failed":
+            what = c.t(f"failed at step {at}: {why_by_attempt[b['attempt']]}",
+                       f"第 {at} 步失败：{why_by_attempt[b['attempt']]}")
+        elif b["result"] == "stopped":
+            what = c.t(f"stopped by us at step {at}: {why_by_attempt[b['attempt']]}",
+                       f"我们在第 {at} 步停止：{why_by_attempt[b['attempt']]}")
+        else:
+            what = c.t(f"built, {at} steps; steps {b['cached_steps'][0]}–{b['cached_steps'][1]} from attempt 3's cache",
+                       f"建成，{at} 步；第 {b['cached_steps'][0]}–{b['cached_steps'][1]} 步用第 3 次的缓存")
+        rows.append([str(b["attempt"]), str(b["hugepages"]), str(b["build_disk_mb"]), str(b["os_disk_gb"]), what,
+                     num(b["seconds"])])
+    a3 = next(b for b in ci["builds"] if b["result"] == "stopped")
+    a4 = next(b for b in ci["builds"] if b["result"] == "built")
+    used = a4["os_disk_free_gib_before"] - a4["os_disk_free_gib_after"]
+    ch = {x["to"]: x for x in ci["changes_for_the_build"]}
+    hp, ws, disk = ch[4096], ch[8192], ch[128]
+    tail = c.t(f"\nBy step {a3['step']} attempt {a3['attempt']} had written {a3['written_mib']['templates']} MiB of "
+               f"templates and {a3['written_mib']['orchestrator']} MiB under the orchestrator's directory, with "
+               f"{a3['os_disk_free_mib']} MiB left on the OS disk; attempt {a4['attempt']} then used {used} GiB "
+               f"(free {a4['os_disk_free_gib_before']} → {a4['os_disk_free_gib_after']} GiB). What we changed: "
+               f"`HUGEPAGES` in the Compose `.env` {hp['from']} → {hp['to']}, then `docker compose up -d --wait`; the "
+               f"test team's build workspace (`disk_mb`) {ws['from']} → {ws['to']} MiB, by adding one row to Embed's "
+               f"internal `project_limits` table; the OS disk {disk['from']} → {disk['to']} GB (deallocate, snapshot, "
+               "`az disk update --size-gb`, start).\n",
+               f"\n到第 {a3['step']} 步时，第 {a3['attempt']} 次已写入 {a3['written_mib']['templates']} MiB 模板和 "
+               f"{a3['written_mib']['orchestrator']} MiB 编排器目录数据，系统盘只剩 {a3['os_disk_free_mib']} MiB；"
+               f"第 {a4['attempt']} 次又用掉 {used} GiB（剩余 {a4['os_disk_free_gib_before']} → "
+               f"{a4['os_disk_free_gib_after']} GiB）。我们改了这些：Compose `.env` 里的 `HUGEPAGES` {hp['from']} → "
+               f"{hp['to']}，再执行 `docker compose up -d --wait`；测试团队的构建工作空间（`disk_mb`）{ws['from']} → "
+               f"{ws['to']} MiB，做法是往 Embed 内部的 `project_limits` 表加一行；系统盘 {disk['from']} → {disk['to']} GB"
+               "（释放、拍快照、`az disk update --size-gb`、开机）。\n")
+    return table(head, rows, ["---:", "---:", "---:", "---:", "---", "---:"]) + tail
+
+
+def v_e_latest_ci(c: Ctx) -> str:
+    ci = c.runs["e-e2b-2026-10-15/latest.json"]["code_interpreter"]
+    m = c.m["e.latest.ci"]
+    head = [c.t("Step", "步骤"), c.t("Passed", "通过"), c.t("Seconds, min–max", "秒，最小–最大"),
+            c.t("Observed in run 4", "第 4 次的观察")]
+    last = {s["step"]: s for s in ci["check_runs"][-1]["steps"]}
+    rows = []
+    for name, v in m["steps"].items():
+        s = last[name]
+        seen = s.get("error", {}).get("value") if isinstance(s.get("error"), dict) else None
+        if seen is None:
+            obs = s.get("observed") or {}
+            seen = obs.get("text") if obs.get("text") else (obs.get("error") or
+                                                              ("png" if obs.get("results") else ""))
+        rows.append([f"`{name}`", f"{v['passed']}/{m['n']}", f"{num(v['min'], 3)}–{num(v['max'], 3)}",
+                     f"`{seen}`" if seen else ""])
+    js = ci["javascript_failure"]
+    labels = [c.t("JavaScript as the first cell of a new sandbox, then the same cell again",
+                  "新沙箱的第一个单元就是这段 JavaScript，再执行一次同样的单元"),
+              c.t("a Python cell first, then the JavaScript cell (the order of the check)",
+                  "先执行一个 Python 单元，再执行这段 JavaScript（检查里的顺序）"),
+              c.t("the JavaScript cell with a leading semicolon", "在这段 JavaScript 前加一个分号")]
+    if len(js["repro"]) != len(labels):
+        raise RenderError("e-2026-10-15-latest: expected 3 JavaScript reproduction cases")
+    repro = []
+    for label, case in zip(labels, js["repro"]):
+        cells = " → ".join((f"`{x['text']}`" if x["text"] else f"`{x['error']['name']}`" if x["error"] else c.t("ok", "成功"))
+                           for x in case["cells"])
+        repro.append(f"{label}: {cells}" if c.lang == "en" else f"{label}：{cells}")
+    src = js["source"]
+    tail = c.t(f"\nWhy JavaScript failed, reproduced in new sandboxes: " + "; ".join(repro) + f". In `{src['file']}` at "
+               f"`{src['repo'].split('@')[1][:7]}`, line 160 writes `process.env['KEY'] = 'VALUE'` with no semicolon, "
+               "and lines 351–361 put those lines before the user code on a context's first execution, so code that "
+               "starts with `[` continues the last of them. Cells that start with `console.log` or a number ran.\n",
+               f"\nJavaScript 失败的原因（在新沙箱里复现）：" + "；".join(repro) + f"。在 `{src['repo'].split('@')[1][:7]}` 的 "
+               f"`{src['file']}` 里，第 160 行写出的 `process.env['KEY'] = 'VALUE'` 不带分号，第 351–361 行在一个上下文"
+               "第一次执行时把这些语句放在用户代码前面，于是以 `[` 开头的代码接到了最后一句上。以 `console.log` 或数字"
+               "开头的代码可以正常执行。\n")
+    return table(head, rows, ["---", "---:", "---:", "---"]) + tail
 
 
 BLOCKS = {
     "comparison": b_comparison, "runs": b_runs,
     "a-agent-input": v_a_agent_input, "a-agent": v_a_agent, "a-attr": v_a_attr, "a-late": v_a_late,
-    "a-setup": v_a_setup, "b-run": v_b, "c-run": v_c, "d-input": v_d_input, "d-cold": v_d_cold,
+    "a-setup": v_a_setup, "b-run": v_b, "b-sessions": v_b_sessions, "c-run": v_c, "d-input": v_d_input, "d-cold": v_d_cold,
     "d-warm": v_d_warm, "d-scale": v_d_scale, "d-recovery": v_d_recovery, "d-placement": v_d_placement,
     "e-agent-input": v_e_agent_input, "e-agent": v_e_agent, "e-perf-input": v_e_perf_input,
     "e-cold": v_e_cold, "e-warm": v_e_warm, "e-scale": v_e_scale,
+    "e-latest-input": v_e_latest_input, "e-latest-sdk": v_e_latest_sdk, "e-latest-build": v_e_latest_build,
+    "e-latest-ci": v_e_latest_ci,
+    "e-multi-input": v_e_multi_input, "e-multi-agent": v_e_multi_agent, "e-multi-scale": v_e_multi_scale,
+    "e-multi-idle": v_e_multi_idle, "e-multi-hostloss": v_e_multi_hostloss,
 }
 
 

@@ -47,7 +47,11 @@ SUPPORT_RUNS = {"abc-2026-09-27-foundation", "d-2026-09-29-cold-early", "d-2026-
                 "d-2026-09-29-capacity", "d-2026-09-22-field"}
 PAIRS = [("README.md", "README_CN.md"), ("VALIDATION.md", "VALIDATION_CN.md")]
 
-ALLOWED_IPV4 = {"127.0.0.1"}
+# Loopback, and the fixed link-local address of the Azure instance metadata service (the same on every Azure VM;
+# measure_e2b.py reads the VM's managed identity token from it).
+ALLOWED_IPV4 = {"127.0.0.1", "169.254.169.254"}
+# Fixed home directory of the default user inside an E2B sandbox, not a machine of the author.
+ALLOWED_LOCAL_PATHS = {"/home/user/"}
 # The ACR token username the SDK expects; documented as a fixed value, not an identity.
 ALLOWED_GUIDS = {"00000000-0000-0000-0000-000000000000"}
 PRIVATE_PATTERNS = {
@@ -59,7 +63,10 @@ PRIVATE_PATTERNS = {
 }
 # Names from the author's environment; stored as plain fragments because they are not secrets but must not ship.
 INTERNAL_NAMES = ["7d645c", "5mliuz7m6nn64", "bfe2665ff6", "33546699", "byoaks-v3", "aks-byoaks", "rg-byoaks",
-                  "MCAPS", "XINYU-SUR", "adcproxy.io", "caresp_", "a6186e7a", "kylerc", "bowen", "reply-to-ken"]
+                  "MCAPS", "XINYU-SUR", "adcproxy.io", "caresp_", "a6186e7a", "kylerc", "bowen", "reply-to-ken",
+                  "e2b-embed-vm"]
+# Matched with case: the author's E2B VMs are lowercase e2b-vm*, and config/.env.example has YOUR-E2B-VM-NAME.
+INTERNAL_NAMES_CASED = ["e2b-vm"]
 RETIRED_CLAIMS = ["not observed on the cluster", "Sessions on cluster-not observed", "NOT_ON_CLUSTER",
                   "24–26 s", "11–16 s", "Managed, per agent",
                   "same sample agent on all four", "同一个示例 agent 部署到四条路径",
@@ -481,11 +488,16 @@ def check_private(_pages: dict[str, str], files: list[Path] | None = None) -> li
                     continue  # loopback, or the private example subnet prefix 10.x.y.0
                 if kind == "guid" and hit in ALLOWED_GUIDS:
                     continue
+                if kind == "local-path" and hit in ALLOWED_LOCAL_PATHS:
+                    continue
                 if kind == "email" and hit.endswith("@example.com"):
                     continue
                 errors.append(f"{rel}: {kind} {hit[:40]}")
         for frag in INTERNAL_NAMES:
             if frag.lower() in text.lower():
+                errors.append(f"{rel}: internal name {frag}")
+        for frag in INTERNAL_NAMES_CASED:
+            if frag in text:
                 errors.append(f"{rel}: internal name {frag}")
         if rel.endswith(".md"):
             for claim in RETIRED_CLAIMS:

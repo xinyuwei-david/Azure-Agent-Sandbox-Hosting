@@ -262,7 +262,9 @@ def test_resource_group_delete_stays_alone_and_confirmed(name, fault):
 
 def test_private_content_fails(tmp_path):
     for leak in ("subscription 12345678-1234-1234-1234-123456789abc", "router at 20.242.33.10",
-                 "mail someone@contoso.com", "cluster aks-byoaks", "sessions were not observed on the cluster"):
+                 "mail someone@contoso.com", "cluster aks-byoaks", "sessions were not observed on the cluster",
+                 "ran from /home/alice/work", "metadata at 169.254.169.253", "resource group e2b-embed-vm",
+                 "source host-check-e2b-vm.txt", "evidence e2b-vm2-refusal.txt"):
         f = tmp_path / "leak.md"
         f.write_text(f"# x\n\n{leak}\n", encoding="utf-8")
         assert vd.check_private({}, [f]), leak
@@ -270,5 +272,7 @@ def test_private_content_fails(tmp_path):
 
 def test_clean_text_passes_private(tmp_path):
     f = tmp_path / "ok.md"
-    f.write_text("# x\n\nPOST http://127.0.0.1:8080/reflect with 10.225.1.0/24 and user@example.com\n", encoding="utf-8")
+    f.write_text("# x\n\nPOST http://127.0.0.1:8080/reflect with 10.225.1.0/24 and user@example.com\n"
+                 "token from http://169.254.169.254/metadata, file /home/user/scale.txt in the sandbox\n"
+                 "E2B_VM_NAME=YOUR-E2B-VM-NAME\n", encoding="utf-8")
     assert vd.check_private({}, [f]) == []

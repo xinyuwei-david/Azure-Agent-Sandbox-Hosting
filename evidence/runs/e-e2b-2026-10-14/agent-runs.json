@@ -14,7 +14,9 @@
     "guest_kernel": "6.1.177+",
     "host_kernel": "6.17.0-1022-azure",
     "vcpus": 2,
-    "memory_mb": 512
+    "memory_mb": 512,
+    "vmm_source": "host process list: /fc-versions/v1.14-0.2.0/amd64/firecracker",
+    "guest_kernel_source": "uname -r inside the sandbox"
   },
   "cost_floor_usd_per_hour": {
     "vm_d4ds_v7": 0.326,
@@ -22,6 +24,30 @@
     "premium_ssd_p6": 0.013,
     "shape": "1 x Standard_D4ds_v7 Linux + 1 Standard Static Public IP + 50 GB Premium SSD P6 in East US 2",
     "source": "Azure Retail Prices API, queried 2026-10-14, pay-as-you-go, before discounts and tax"
+  },
+  "agent": {
+    "instructions": "You are a concise assistant with access to `run_in_e2b_sandbox`. For EVERY user message, first call `run_in_e2b_sandbox` once to inspect or update files in /home/user, then answer concisely as instructed. When asked for a number only or word only, reply with that exact token only.",
+    "tools": [
+      {
+        "type": "function",
+        "name": "run_in_e2b_sandbox",
+        "description": "Execute Python 3 code inside the session's isolated E2B Firecracker microVM sandbox on Azure.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "python_code": {
+              "type": "string",
+              "description": "Python 3 code to run inside the E2B sandbox. Print output to stdout."
+            }
+          },
+          "required": [
+            "python_code"
+          ],
+          "additionalProperties": false
+        },
+        "strict": true
+      }
+    ]
   },
   "inputs": {
     "first": "Where is Bangkok? Answer in one short sentence.",
@@ -45,7 +71,6 @@
       "started_at": "2026-10-14T06:13:38.590Z",
       "sandbox_id": "e2b-sandbox-1",
       "create_total_s": 0.14,
-      "vmm_type": "firecracker",
       "cold_total_s": 4.26,
       "stop_total_s": 0.13,
       "state_after_stop": "Paused",
@@ -84,7 +109,6 @@
       "started_at": "2026-10-14T06:14:03.391Z",
       "sandbox_id": "e2b-sandbox-2",
       "create_total_s": 0.07,
-      "vmm_type": "firecracker",
       "cold_total_s": 2.89,
       "stop_total_s": 0.11,
       "state_after_stop": "Paused",
@@ -123,7 +147,6 @@
       "started_at": "2026-10-14T06:14:30.570Z",
       "sandbox_id": "e2b-sandbox-3",
       "create_total_s": 0.06,
-      "vmm_type": "firecracker",
       "cold_total_s": 8.44,
       "stop_total_s": 0.15,
       "state_after_stop": "Paused",
@@ -317,6 +340,15 @@
     "state_verified_count": 20
   },
   "leftover_sandboxes": 0,
+  "setup": {
+    "apt_and_docker_s": 33.0,
+    "compose_and_template_s": 144.0,
+    "total_s": 177.0
+  },
+  "_corrections": [
+    "2026-10-15: added the agent's instructions and tool schema from the driver source",
+    "2026-10-15: removed runs[*].vmm_type, a constant the driver wrote rather than read; the VMM comes from the host process list (isolation_check.vmm_source)"
+  ],
   "_sources": [
     {
       "file": "e-2026-10-14-agent.json",
@@ -348,10 +380,5 @@
       "bytes": 24728,
       "role": "benchmark driver"
     }
-  ],
-  "setup": {
-    "apt_and_docker_s": 33.0,
-    "compose_and_template_s": 144.0,
-    "total_s": 177.0
-  }
+  ]
 }

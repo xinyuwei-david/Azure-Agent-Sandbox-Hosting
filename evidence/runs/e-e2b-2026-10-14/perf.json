@@ -7,16 +7,59 @@
   "model": "gpt-5.4-mini",
   "node_sku": "Standard_D4ds_v7",
   "host_nodes": 1,
-  "max_concurrent_sandboxes_observed": 9,
   "request": "POST <Foundry project>/openai/v1/responses {\"input\": <input>} with Prompt Agent calling E2B sandbox tool",
-  "client": "Windows workstation in East US 2 calling Foundry endpoint and E2B VM in East US 2",
+  "client": "the E2B host VM in East US 2 (the benchmark driver ran there over SSH) calling the Foundry endpoint in East US 2",
+  "agent": {
+    "instructions": "You are a concise assistant with access to `run_in_e2b_sandbox`. For EVERY user message, first call `run_in_e2b_sandbox` once to inspect or update files in /home/user, then answer concisely as instructed. When asked for a number only or word only, reply with that exact token only.",
+    "tools": [
+      {
+        "type": "function",
+        "name": "run_in_e2b_sandbox",
+        "description": "Execute Python 3 code inside the session's isolated E2B Firecracker microVM sandbox on Azure.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "python_code": {
+              "type": "string",
+              "description": "Python 3 code to run inside the E2B sandbox. Print output to stdout."
+            }
+          },
+          "required": [
+            "python_code"
+          ],
+          "additionalProperties": false
+        },
+        "strict": true
+      }
+    ]
+  },
   "inputs": {
-    "cold": "Reply with exactly COLD-{i}",
-    "warm_first": "Remember the code word LANTERN-7. Reply only OK.",
-    "warm_followup_1": "What is the code word? Reply with the word only.",
-    "warm_followup_n": "Reply with exactly WARM-{i}",
-    "scale_turn1": "Remember SCALE-{i}. Reply only OK.",
-    "scale_turn2": "What did I ask you to remember? Word only."
+    "cold": "Use run_in_e2b_sandbox to print COLD-{i}, then reply with exactly COLD-{i}",
+    "warm": [
+      "Use run_in_e2b_sandbox to save the code word LANTERN-7 to /home/user/codeword.txt. Reply only OK.",
+      "Use run_in_e2b_sandbox to read /home/user/codeword.txt. What is the code word? Reply with the word only.",
+      "Use run_in_e2b_sandbox to verify the sandbox is alive, then reply with exactly WARM-1",
+      "Use run_in_e2b_sandbox to verify the sandbox is alive, then reply with exactly WARM-2"
+    ],
+    "scale": [
+      "Use run_in_e2b_sandbox to write SCALE-{k} to /home/user/scale.txt. Reply only OK.",
+      "Use run_in_e2b_sandbox to read /home/user/scale.txt. What did I ask you to remember? Word only."
+    ],
+    "recovery": [
+      "Use run_in_e2b_sandbox to write LANTERN-7 to /home/user/live.txt. Reply only OK.",
+      "Use run_in_e2b_sandbox to read /home/user/live.txt. What is the code word? Reply with the word only."
+    ]
+  },
+  "clocks": {
+    "cold_turns.wall_s": "one time.perf_counter() stopwatch around conversation create + Sandbox.create + the turn",
+    "cold_turns.sandbox_create_to_ready_s": "Sandbox.create('base') until it returns (Running)",
+    "cold_turns.agent_turn_s": "first POST /openai/v1/responses until the final answer, every tool round trip included",
+    "sandbox_tool_s": "the sandbox command alone (commands.run), summed over the turn's tool calls",
+    "warm_turns.wall_s": "the turn; turn 1 also includes the Sandbox.create before it",
+    "scalability.turn1.wall_s": "Sandbox.create + turn 1; the conversation create before it is outside",
+    "scalability.turn2.wall_s": "turn 2",
+    "recovery.replacement_ready_s": "kill of one sandbox + Sandbox.create of its replacement until it returns",
+    "recovery.followup_on_live_session.wall_s": "one turn on a different sandbox that stayed alive"
   },
   "cold_turns": [
     {
@@ -28,8 +71,7 @@
       "sandbox_tool_s": 0.121,
       "status": "completed",
       "answer": "COLD-1",
-      "sandbox_id": "e2b-cold-1",
-      "runtime": "firecracker"
+      "sandbox_id": "e2b-cold-1"
     },
     {
       "started_utc": "06:15:06.244",
@@ -40,8 +82,7 @@
       "sandbox_tool_s": 0.106,
       "status": "completed",
       "answer": "COLD-2",
-      "sandbox_id": "e2b-cold-2",
-      "runtime": "firecracker"
+      "sandbox_id": "e2b-cold-2"
     },
     {
       "started_utc": "06:15:08.862",
@@ -52,8 +93,7 @@
       "sandbox_tool_s": 0.128,
       "status": "completed",
       "answer": "COLD-3",
-      "sandbox_id": "e2b-cold-3",
-      "runtime": "firecracker"
+      "sandbox_id": "e2b-cold-3"
     },
     {
       "started_utc": "06:15:12.567",
@@ -64,8 +104,7 @@
       "sandbox_tool_s": 0.134,
       "status": "completed",
       "answer": "COLD-4",
-      "sandbox_id": "e2b-cold-4",
-      "runtime": "firecracker"
+      "sandbox_id": "e2b-cold-4"
     },
     {
       "started_utc": "06:15:16.366",
@@ -76,8 +115,7 @@
       "sandbox_tool_s": 0.116,
       "status": "completed",
       "answer": "COLD-5",
-      "sandbox_id": "e2b-cold-5",
-      "runtime": "firecracker"
+      "sandbox_id": "e2b-cold-5"
     }
   ],
   "warm_turns": [
@@ -114,6 +152,10 @@
       "answer": "WARM-2"
     }
   ],
+  "firecracker_process_count": {
+    "command": "bash -c \"pgrep -fc '/fc-versions/.*firecracker' || true\" from the benchmark driver on the host",
+    "includes": "the bash process that runs pgrep, whose command line matches the pattern; re-checked on 2026-10-15 on the same VM: 1 with no sandbox, 2 with one sandbox"
+  },
   "scalability": [
     {
       "concurrency": 4,
@@ -394,6 +436,12 @@
       "state_preserved": true
     }
   },
+  "_corrections": [
+    "2026-10-15: inputs replaced with the prompts the benchmark driver sent; the earlier record listed D's prompts",
+    "2026-10-15: added the agent's instructions and tool schema, and the clock definitions, from the driver source",
+    "2026-10-15: removed cold_turns[*].runtime, a constant the driver wrote rather than read",
+    "2026-10-15: removed max_concurrent_sandboxes_observed; its pgrep count included the counting shell (see firecracker_process_count)"
+  ],
   "_sources": [
     {
       "file": "e-2026-10-14-perf.json",

@@ -7,6 +7,7 @@
     "a-aca-2026-10-09/late-mount.json": "c81ac0539603589d7beb3422537c6a7f6a24994ece00db566244a29b50eeea3c",
     "abc-2026-09-27/foundation.json": "e7d733b8ad0e56dfb6acab73261d3750838ff6725b4b4352cd0e0ffb131d17f6",
     "b-hosted-agent-2026-09-27/run.json": "bae0b8e3eee47f6b62decd2f2cb63fec87b0e7ff36d6ca486c7820ae1db7e3ac",
+    "b-sessions-2026-10-15/sessions.json": "f5f8ab69e87fac648df137d6dbf549e32a4e783448f37be8298d19a050a377af",
     "c-aks-agent-sandbox-2026-09-27/run.json": "2e63af0990bacff14136796256061b9e5e688a2f26ad23c5f211b3d25f61e077",
     "d-byoaks-2026-09-22/field.json": "15b384f087ceaceef87f66cde174803cafd51d7c5c1fe1455802cb52b2acce1c",
     "d-byoaks-2026-09-29/bench.json": "4b24197e2e075f0f669e65b778e9ca5fd687c5b1ec9f44bd2fc79759b13f5dd7",
@@ -15,8 +16,10 @@
     "d-byoaks-2026-09-29/model-direct.json": "f55403b68aca3ec7fc6382287ec071b06813d4bdc284d7f927e0f47e60488b18",
     "d-byoaks-2026-09-29/placement.json": "a19f92faf818acb0c3bf1e7f757dcdae7c0d36364cf310f6f5ebc96363d863d2",
     "d-byoaks-2026-09-29/recovery.json": "f3f21116914bc42268e8cfaee4c28097c75dfe389729669b406e37eef11e2fdb",
-    "e-e2b-2026-10-14/agent-runs.json": "a3324fe00ddc479f581dfe465fcec490105e8d1188c8c655181e5afb651746f7",
-    "e-e2b-2026-10-14/perf.json": "f1d04192795164ba4d42b2179280af9e5e22b4f71d8ca374183503587f5853f7"
+    "e-e2b-2026-10-14/agent-runs.json": "703c7af57ad26ab02491a5d762b7fd5de4c4998ce549702b49aa522a208d95d6",
+    "e-e2b-2026-10-14/perf.json": "6a46bb8ca6c4dfa5b7779ce1912e29bf1159762b0f06dea6c078abf2edb72551",
+    "e-e2b-2026-10-15/latest.json": "3861f0b8d5f8f181831f9275237bb4de15cb89cadf4164e13a9165cd64505209",
+    "e-e2b-2026-10-15/multi.json": "7b42cb1af075252de478426bf4a09603278bbb1f9fd99b0343dfff96c61c5682"
   },
   "metrics": {
     "a.create": {
@@ -497,6 +500,158 @@
       ],
       "min": 4.38,
       "max": 4.94
+    },
+    "b.sess.create": {
+      "run": "b-2026-10-15-sessions",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "POST .../endpoint/sessions until the session reads active, client wall time",
+      "n": 3,
+      "unit": "s",
+      "values": [
+        6.688,
+        6.865,
+        6.51
+      ],
+      "min": 6.51,
+      "max": 6.865,
+      "median": 6.688
+    },
+    "b.sess.first": {
+      "run": "b-2026-10-15-sessions",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "first answer on the active session, client wall time",
+      "n": 3,
+      "unit": "s",
+      "values": [
+        5.625,
+        4.786,
+        5.852
+      ],
+      "min": 4.786,
+      "max": 5.852,
+      "median": 5.625
+    },
+    "b.sess.first_server": {
+      "run": "b-2026-10-15-sessions",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "first answer: response completed_at minus created_at as recorded by the service (whole seconds)",
+      "n": 3,
+      "unit": "s",
+      "values": [
+        3,
+        2,
+        4
+      ],
+      "min": 2,
+      "max": 4,
+      "median": 3
+    },
+    "b.sess.cold": {
+      "run": "b-2026-10-15-sessions",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "create session until active + first answer, added per run; a sum of two client requests",
+      "n": 3,
+      "unit": "s",
+      "values": [
+        12.313,
+        11.651,
+        12.362
+      ],
+      "min": 11.651,
+      "max": 12.362,
+      "median": 12.313
+    },
+    "b.sess.warm": {
+      "run": "b-2026-10-15-sessions",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "follow-up answer on the same session",
+      "n": 3,
+      "unit": "s",
+      "values": [
+        4.587,
+        4.809,
+        4.415
+      ],
+      "min": 4.415,
+      "max": 4.809,
+      "median": 4.587
+    },
+    "b.sess.stop": {
+      "run": "b-2026-10-15-sessions",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "POST .../sessions/{id}:stop until the session reads idle",
+      "n": 3,
+      "unit": "s",
+      "values": [
+        2.899,
+        3.05,
+        7.713
+      ],
+      "min": 2.899,
+      "max": 7.713,
+      "median": 3.05
+    },
+    "b.sess.resume": {
+      "run": "b-2026-10-15-sessions",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "next answer on the stopped session; the platform provisions compute and restores $HOME",
+      "n": 3,
+      "unit": "s",
+      "values": [
+        12.353,
+        12.023,
+        11.664
+      ],
+      "min": 11.664,
+      "max": 12.353,
+      "median": 12.023
+    },
+    "b.sess.warm_after_resume": {
+      "run": "b-2026-10-15-sessions",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "the answer after that",
+      "n": 3,
+      "unit": "s",
+      "values": [
+        4.599,
+        4.112,
+        3.883
+      ],
+      "min": 3.883,
+      "max": 4.599,
+      "median": 4.112
+    },
+    "b.sess.server": {
+      "run": "b-2026-10-15-sessions",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "every turn: response completed_at minus created_at as recorded by the service (whole seconds)",
+      "n": 12,
+      "unit": "s",
+      "values": [
+        3,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        4,
+        2,
+        2,
+        1
+      ],
+      "min": 1,
+      "max": 4
+    },
+    "b.sess.state_kept": {
+      "run": "b-2026-10-15-sessions",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "files: the file written before stop read back unchanged after resume; conversation: the question count kept growing across stop and resume",
+      "n": 3,
+      "unit": "runs",
+      "files": 3,
+      "conversation": 3
     },
     "c.prepare": {
       "run": "c-2026-09-27",
@@ -1081,11 +1236,11 @@
     "e.vmm": {
       "run": "e-2026-10-14-agent",
       "label": "LOCAL_MEASUREMENT",
-      "what": "VMM running the E2B sandbox",
-      "n": 3,
-      "unit": "runs",
+      "what": "VMM process behind the E2B sandboxes in the host's process list",
+      "n": 1,
+      "unit": "read-back",
       "value": "firecracker",
-      "count": 3
+      "source": "host process list: /fc-versions/v1.14-0.2.0/amd64/firecracker"
     },
     "e.state_kept": {
       "run": "e-2026-10-14-agent",
@@ -1329,8 +1484,7 @@
         3.898,
         3.168
       ],
-      "refused": 0,
-      "max_live_vms": 7
+      "refused": 0
     },
     "e.c8": {
       "run": "e-2026-10-14-perf",
@@ -1349,16 +1503,15 @@
         7.345,
         3.819
       ],
-      "refused": 0,
-      "max_live_vms": 9
+      "refused": 0
     },
     "e.capacity": {
       "run": "e-2026-10-14-perf",
       "label": "LOCAL_MEASUREMENT",
-      "what": "concurrent live Firecracker micro-VMs observed on one host VM with 0 refusals",
+      "what": "largest at-once level answered in full on one host VM; no live micro-VM count is published for this run because the driver's pgrep count included its own shell (perf.json firecracker_process_count)",
       "n": 1,
       "unit": "sessions",
-      "max_sessions": 9,
+      "max_sessions": 8,
       "node_sku": "Standard_D4ds_v7"
     },
     "e.pod_lost": {
@@ -1382,6 +1535,427 @@
         2.61
       ],
       "value": 2.61
+    },
+    "e.multi.b.create": {
+      "run": "e-2026-10-15-multi",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "Sandbox.create until it returns, host b",
+      "n": 3,
+      "unit": "s",
+      "values": [
+        0.09,
+        0.06,
+        0.06
+      ],
+      "min": 0.06,
+      "max": 0.09,
+      "median": 0.06
+    },
+    "e.multi.b.first": {
+      "run": "e-2026-10-15-multi",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "first Prompt Agent turn, host b",
+      "n": 3,
+      "unit": "s",
+      "values": [
+        5.58,
+        3.85,
+        45.56
+      ],
+      "min": 3.85,
+      "max": 45.56,
+      "median": 5.58
+    },
+    "e.multi.b.cold": {
+      "run": "e-2026-10-15-multi",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "create + first Prompt Agent turn, added per run, host b",
+      "n": 3,
+      "unit": "s",
+      "values": [
+        5.67,
+        3.91,
+        45.62
+      ],
+      "min": 3.91,
+      "max": 45.62,
+      "median": 5.67
+    },
+    "e.multi.b.warm": {
+      "run": "e-2026-10-15-multi",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "follow-up turn, host b",
+      "n": 3,
+      "unit": "s",
+      "values": [
+        6.9,
+        5.92,
+        3.6
+      ],
+      "min": 3.6,
+      "max": 6.9,
+      "median": 5.92
+    },
+    "e.multi.b.pause": {
+      "run": "e-2026-10-15-multi",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "beta_pause until it returns, host b",
+      "n": 3,
+      "unit": "s",
+      "values": [
+        0.15,
+        0.11,
+        0.12
+      ],
+      "min": 0.11,
+      "max": 0.15,
+      "median": 0.12
+    },
+    "e.multi.b.resume": {
+      "run": "e-2026-10-15-multi",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "Sandbox.connect until it returns, host b",
+      "n": 3,
+      "unit": "s",
+      "values": [
+        0.08,
+        0.1,
+        0.08
+      ],
+      "min": 0.08,
+      "max": 0.1,
+      "median": 0.08
+    },
+    "e.multi.b.first_after_resume": {
+      "run": "e-2026-10-15-multi",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "first turn after resume, host b",
+      "n": 3,
+      "unit": "s",
+      "values": [
+        6.87,
+        7.05,
+        45.53
+      ],
+      "min": 6.87,
+      "max": 45.53,
+      "median": 7.05
+    },
+    "e.multi.b.recover": {
+      "run": "e-2026-10-15-multi",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "connect + first turn after resume, added per run, host b",
+      "n": 3,
+      "unit": "s",
+      "values": [
+        6.95,
+        7.15,
+        45.61
+      ],
+      "min": 6.95,
+      "max": 45.61,
+      "median": 7.15
+    },
+    "e.multi.b.state_kept": {
+      "run": "e-2026-10-15-multi",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "sandbox history grew 1, 2, 3, 4 across pause and resume, host b",
+      "n": 3,
+      "unit": "runs",
+      "count": 3
+    },
+    "e.multi.one_host": {
+      "run": "e-2026-10-15-multi",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "8 sessions at once on host a alone",
+      "n": 8,
+      "unit": "sessions",
+      "answered": 7,
+      "refused": 1,
+      "per_host": {
+        "a": {
+          "sessions": 8,
+          "answered": 7
+        }
+      },
+      "model_http_statuses": {
+        "200": 28
+      },
+      "refusal_cause": "cannot allocate memory"
+    },
+    "e.multi.two_hosts": {
+      "run": "e-2026-10-15-multi",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "8 sessions at once on each of hosts a and b, spread by the client",
+      "n": 16,
+      "unit": "sessions",
+      "answered": 14,
+      "refused": 2,
+      "per_host": {
+        "a": {
+          "sessions": 8,
+          "answered": 7
+        },
+        "b": {
+          "sessions": 8,
+          "answered": 7
+        }
+      },
+      "model_http_statuses": {
+        "200": 56,
+        "500": 2
+      },
+      "refusal_cause": "cannot allocate memory"
+    },
+    "e.multi.idle": {
+      "run": "e-2026-10-15-multi",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "idle base sandboxes created on host a before the first refused create, per run",
+      "n": 3,
+      "unit": "sandboxes",
+      "values": [
+        5,
+        7,
+        7
+      ],
+      "max": 7,
+      "refusals": [
+        "error setting fc metrics (connection refused)",
+        "cannot allocate memory",
+        "cannot allocate memory"
+      ]
+    },
+    "e.multi.hugepages": {
+      "run": "e-2026-10-15-multi",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "2 MiB hugepages: Compose default pool, held by postgres, reserved by each 512 MiB base sandbox at create",
+      "n": 1,
+      "unit": "pages",
+      "pool": 2048,
+      "postgres": 75,
+      "per_sandbox": 256,
+      "fit": 7
+    },
+    "e.multi.hostloss": {
+      "run": "e-2026-10-15-multi",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "host a's E2B stack stopped with docker compose stop (VM running), then started again",
+      "n": 1,
+      "unit": "read-back",
+      "other_live_session": true,
+      "other_new_session_s": 4.117,
+      "lost_paused_from_other": false,
+      "lost_create": false,
+      "own_paused_after_restart": true,
+      "running_before_stop_after_restart": false,
+      "new_session_after_restart_s": 4.024,
+      "stop_s": 73.69,
+      "start_s": 59.55
+    },
+    "e.latest.sdk.create": {
+      "run": "e-2026-10-15-latest",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "Sandbox.create until it returns, e2b 2.56.0 on host a",
+      "n": 3,
+      "unit": "s",
+      "values": [
+        0.1,
+        0.06,
+        0.06
+      ],
+      "min": 0.06,
+      "max": 0.1,
+      "median": 0.06
+    },
+    "e.latest.sdk.first": {
+      "run": "e-2026-10-15-latest",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "first Prompt Agent turn, e2b 2.56.0 on host a",
+      "n": 3,
+      "unit": "s",
+      "values": [
+        5.24,
+        4.93,
+        4.0
+      ],
+      "min": 4.0,
+      "max": 5.24,
+      "median": 4.93
+    },
+    "e.latest.sdk.cold": {
+      "run": "e-2026-10-15-latest",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "create + first Prompt Agent turn, added per run, e2b 2.56.0 on host a",
+      "n": 3,
+      "unit": "s",
+      "values": [
+        5.34,
+        4.99,
+        4.06
+      ],
+      "min": 4.06,
+      "max": 5.34,
+      "median": 4.99
+    },
+    "e.latest.sdk.warm": {
+      "run": "e-2026-10-15-latest",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "follow-up turn, e2b 2.56.0 on host a",
+      "n": 3,
+      "unit": "s",
+      "values": [
+        3.7,
+        4.24,
+        35.02
+      ],
+      "min": 3.7,
+      "max": 35.02,
+      "median": 4.24
+    },
+    "e.latest.sdk.pause": {
+      "run": "e-2026-10-15-latest",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "beta_pause until it returns, e2b 2.56.0 on host a",
+      "n": 3,
+      "unit": "s",
+      "values": [
+        0.15,
+        0.14,
+        0.17
+      ],
+      "min": 0.14,
+      "max": 0.17,
+      "median": 0.15
+    },
+    "e.latest.sdk.resume": {
+      "run": "e-2026-10-15-latest",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "Sandbox.connect until it returns, e2b 2.56.0 on host a",
+      "n": 3,
+      "unit": "s",
+      "values": [
+        0.08,
+        0.08,
+        0.11
+      ],
+      "min": 0.08,
+      "max": 0.11,
+      "median": 0.08
+    },
+    "e.latest.sdk.first_after_resume": {
+      "run": "e-2026-10-15-latest",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "first turn after resume, e2b 2.56.0 on host a",
+      "n": 3,
+      "unit": "s",
+      "values": [
+        6.72,
+        6.2,
+        8.14
+      ],
+      "min": 6.2,
+      "max": 8.14,
+      "median": 6.72
+    },
+    "e.latest.sdk.recover": {
+      "run": "e-2026-10-15-latest",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "connect + first turn after resume, added per run, e2b 2.56.0 on host a",
+      "n": 3,
+      "unit": "s",
+      "values": [
+        6.8,
+        6.28,
+        8.25
+      ],
+      "min": 6.28,
+      "max": 8.25,
+      "median": 6.8
+    },
+    "e.latest.sdk.state_kept": {
+      "run": "e-2026-10-15-latest",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "sandbox history grew 1, 2, 3, 4 across pause and resume, e2b 2.56.0 on host a",
+      "n": 3,
+      "unit": "runs",
+      "count": 3
+    },
+    "e.latest.ci": {
+      "run": "e-2026-10-15-latest",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "code-interpreter-v1 checks with e2b-code-interpreter 2.11.0; seconds per step, min and max",
+      "n": 4,
+      "unit": "runs",
+      "steps": {
+        "create (default template)": {
+          "passed": 4,
+          "min": 0.116,
+          "max": 0.194
+        },
+        "README: x = 1": {
+          "passed": 4,
+          "min": 0.082,
+          "max": 0.11
+        },
+        "README: x+=1; x": {
+          "passed": 4,
+          "min": 0.011,
+          "max": 0.012
+        },
+        "pandas sum": {
+          "passed": 4,
+          "min": 0.565,
+          "max": 1.303
+        },
+        "matplotlib png": {
+          "passed": 4,
+          "min": 0.977,
+          "max": 3.317
+        },
+        "javascript kernel": {
+          "passed": 0,
+          "min": 0.03,
+          "max": 0.064
+        },
+        "exception": {
+          "passed": 4,
+          "min": 0.038,
+          "max": 0.042
+        },
+        "pause": {
+          "passed": 4,
+          "min": 0.157,
+          "max": 0.4
+        },
+        "connect (resume)": {
+          "passed": 4,
+          "min": 0.233,
+          "max": 0.902
+        },
+        "x after resume": {
+          "passed": 4,
+          "min": 0.088,
+          "max": 0.652
+        },
+        "kill": {
+          "passed": 4,
+          "min": 0.057,
+          "max": 0.746
+        }
+      },
+      "failed": [
+        "javascript kernel"
+      ]
+    },
+    "e.latest.build": {
+      "run": "e-2026-10-15-latest",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "unchanged build_prod.py against host a; host settings raised between attempts",
+      "n": 4,
+      "unit": "attempts",
+      "built_attempt": 4,
+      "built_s": 426,
+      "steps": 30
     }
   }
 }

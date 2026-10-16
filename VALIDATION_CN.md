@@ -12,7 +12,7 @@
 - **B · Foundry hosted agent。** `azd ai agent init` 把 workshop 的 `azure.yaml` 绑定到已有项目，`azd deploy` 构建并发布一个版本。Learn 的描述是：每会话一个 VM 级隔离的沙箱，空闲期间保留 `$HOME` 和 `/files`，空闲超时 2–60 分钟（默认 15），30 天不活跃后删除会话。
 - **C · AKS + agent-sandbox。** AKS 开启 Workload Identity 和 Blob CSI 驱动，一个 `KataVmIsolation` 的 Azure Linux 节点池（我们用 `Standard_D4s_v3`），agent-sandbox `v0.5.2`（`agents.x-k8s.io/v1beta1`，kind `Sandbox`），一个存状态的 Blob PVC，以及只允许一个来源地址访问的 LoadBalancer。挂起和恢复就是 `spec.operatingMode: Suspended | Running`；pod 被删除，文件状态从 Blob 恢复，不是内存快照恢复。Learn 写明的技术栈：Azure Linux 主机、Microsoft Hyper-V、Cloud Hypervisor VMM、Kata Containers。
 - **D · BYO-AKS。** 最初只有一个 Kata 节点时，`foundry-system` 里读到 13 个运行时 pod：9 个固定的 Deployment 副本（router ×3，前面是 `:443` 的 LoadBalancer；controller ×2；identity proxy ×2；telemetry controller ×2）加 4 个 DaemonSet。每个 DaemonSet 会在每个匹配的 Kata 节点上增加一个 pod，所以总数随节点池增长。每个会话是独立的 Deployment、ReplicaSet 和 pod，`runtimeClassName: kata-vm-isolation`，放在按项目划分的命名空间里。
-- **E · E2B on Azure VM。** 一台开启嵌套虚拟化（`/dev/kvm`）的 Ubuntu 24.04 LTS Gen2 VM（`Standard_D4ds_v7`）运行开源 E2B Embed Docker Compose 栈（`e2b-dev/runtime`，固定在 `588e5b9`）。每次 `Sandbox.create("base")` 启动一个 Firecracker `v1.14-0.2.0` micro-VM（2 vCPU、512 MB、guest 内核 `6.1.177+`）；`beta_pause` 把内存和磁盘快照（`vm_state` + `mem_file`）存到本地 SSD，`Sandbox.connect` 恢复。Foundry Prompt Agent（`gpt-5.4-mini`）通过 `3000` 和 `3002` 端口上的函数工具调用沙箱。
+- **E · E2B on Azure VM。** 一台开启嵌套虚拟化（`/dev/kvm`）的 Ubuntu 24.04 LTS Gen2 VM（`Standard_D4ds_v7`）运行开源 E2B Embed Docker Compose 栈（`e2b-dev/runtime`，固定在 `588e5b9`）。每次 `Sandbox.create("base")` 启动一个 Firecracker `v1.14-0.2.0` micro-VM（2 vCPU、512 MB、guest 内核 `6.1.177+`）；`beta_pause` 把内存和磁盘快照（`vm_state` + `mem_file`）存到 VM 的系统盘上（E2B 的模板也在这块盘上），`Sandbox.connect` 恢复。Foundry Prompt Agent（`gpt-5.4-mini`）通过 `3000` 和 `3002` 端口上的函数工具调用沙箱。Embed [按设计只有一台机器](https://github.com/e2b-dev/runtime/blob/588e5b9500b0987bc5a700d91483b03f0ae7d2a2/embed/README.md#when-one-node-is-not-enough)，只提供明文 HTTP，没有持久数据卷；`e-2026-10-15-multi` 把两套独立安装并排运行。
 
 为什么这样计时：
 
@@ -25,6 +25,13 @@
 | 恢复，A（分段相加） | SDK resume 调用 → Running | 加上恢复后的第一个回答耗时 | resume 在客户端计时；回答在沙箱内计时 |
 | 恢复，C | patch `operatingMode: Running` | LoadBalancer 返回第一个回答 | 客户端 |
 | pod 丢失 | pod 被删除 | 替代 pod 变为 Ready（Kubernetes 时间戳） | 集群 |
+| B 会话接口：创建、停止 | `POST .../endpoint/sessions`、`POST .../sessions/{id}:stop` | 会话读到 `active`、`idle` | 客户端；含失败的尝试及其间隔 2 s |
+| 冷启动，E 的 A 口径（分段相加） | `Sandbox.create("base")` → 返回 | 加上第一轮 Prompt Agent：第一次 `POST /openai/v1/responses` 到最终回答，含每次工具往返 | 工具进程内；E 的实测在 E2B 宿主 VM 上 |
+| 冷启动，E 的 D 口径 | 创建对话 | 这一轮的最终回答，中间含 `Sandbox.create`（一次计时） | 同上 |
+| 恢复，E（分段相加） | `Sandbox.connect` → 返回 | 加上恢复后的第一轮 | 同上 |
+| 暂停，E | `beta_pause` | 返回 | 同上 |
+
+E 和 `b-2026-10-15-sessions` 的计时都用测量进程里的 `time.perf_counter()`；范围是最小值到最大值。A 和 E 在停止或暂停结束后等 5 s 再恢复，这段等待不计入任何计时。E 的并发表给的是沙箱创建加第 1 轮，这是 2026-10-14 驱动的计时口径。
 
 A 的回答在沙箱内计时，是因为 2026-09-27 那次从操作员地址访问不到端口（端口的 IP 规则看到的是不断变化的 Azure 出口地址）。所以四条路径的网络链路并不相同，同一行比较的是实现方式，而不是网络。
 
@@ -49,15 +56,19 @@ A 的冷启动为 `create_total_s + first.guest_s`，恢复到回答为 `resume_
 
 [`tools/check_isolation.py`](tools/check_isolation.py)（C 和 D）读取 `kubectl get pods` 和 `kubectl get nodes`，要求 `runtimeClassName: kata-vm-isolation` 且 phase 为 Running；带 `--exec-uname` 时比较 pod 内的 `uname -r` 和所在节点的 `kernelVersion`。
 
-[`tools/measure_e2b.py`](tools/measure_e2b.py)（E）针对调用 E2B Firecracker 沙箱工具的 Foundry Prompt Agent，运行与 A 对齐的 3 次 `agent` 协议（`Sandbox.create("base")` → 首答 → 追问 → `beta_pause` → `Sandbox.connect` → 追问 → `kill`）以及与 D 对齐的 `perf` 协议（冷启动 n=5、带 `LANTERN-7` 的同会话追问、并发 4 和 8，以及沙箱替换）。
+[`tools/measure_e2b.py`](tools/measure_e2b.py)（E）先创建自己的 Prompt Agent 版本（指令和工具定义写进每份输出），然后运行与 A 对齐的 3 次 `agent` 协议（`Sandbox.create("base")` → 首答 → 追问 → `beta_pause` → 等 5 s → `Sandbox.connect` → 追问 → `kill`）、与 D 对齐的 `perf` 协议（冷启动 n=5、带 `LANTERN-7` 的同会话追问、并发 4 和 8，以及沙箱替换）、`scale`（把会话分到 `--hosts` 里列出的多套 Embed 安装上）和 `hostloss`（停掉一套安装的服务栈，记录其他安装和暂停的沙箱还能做什么），最后删除 agent 版本、所有对话和所有沙箱。任何阶段失败、丢失状态或留下资源都返回退出码 1。2026-10-15 的实测用的是它的 `036dc81…` 版，只有 host b 上的 agent 实测用的是更早的 `89255d0b…`。仓库里的版本只改了失败处理，问题、协议和计时不变：恢复后的追问丢了口令，或 `hostloss` 丢了本应保留的东西（另一台的存活会话和新会话、停掉那台重启后的暂停沙箱和新会话），或留下沙箱或对话时，返回退出码 1；创建中途失败时也会清理；`--hosts` 文件读不了时返回退出码 2。2026-10-14 的数字来自作者的私有驱动脚本，它复现了那个脚本的 agent、问题和计时。
+
+[`tools/measure_code_interpreter.py`](tools/measure_code_interpreter.py)（E）用 `e2b-code-interpreter` 2.11.0 对 E2B 官方的 `code-interpreter-v1` 模板跑 `e-2026-10-15-latest` 的 11 个步骤，任何一步失败或留下沙箱都会失败。
+
+[`tools/measure_sessions.py`](tools/measure_sessions.py)（B）按 [Manage hosted agent sessions](https://learn.microsoft.com/azure/foundry/agents/how-to/manage-hosted-sessions) 执行显式会话生命周期：创建固定到某个 agent 版本的会话，向会话写入一个文件，回答两轮，`:stop` 并等到 `idle`，在同一个 `agent_session_id` 上再回答，读回文件，再回答一轮，删除会话。认证用 `https://ai.azure.com` 的 Azure CLI token 或 `SESSIONS_AUTH_HEADER` 里的请求头；每次 HTTP 尝试（含重试）都会记录；输出一份私有记录和一份去掉会话 ID 与端点的公开记录。退出码 0 要求每次都跑完、文件原样读回、问题计数持续增长，并且它创建的会话全部删除；2026-10-15 的实测四项都满足。
 
 workshop 的脚本（`module-01/setup.sh`、`module-03/prepare-agent-sandbox.sh`、`module-04/sandbox-deploy.sh`）按 `905f2c2` 原样使用，本仓库不复制它们。
 
 ## 实测记录
 
-所有实测都在 East US 2，客户端是一台 Windows 工作站。A/B/C 记录明确写了 Azure CLI 2.88.0 和 azd 1.34.1；A 的 SDK 记录还写了 Python 3.13。原始控制台输出和 ID 留在作者的私有目录里；[`tools/export_evidence.py`](tools/export_evidence.py) 把它们投影到 [`evidence/runs/`](evidence/runs/)，记录了每个私有源文件的 SHA-256，并把节点、pod 和命名空间名替换成中性标签。
+所有实测使用的 Azure 资源都在 East US 2。客户端是一台 Windows 工作站，只有 `b-2026-10-15-sessions`（Japan East 的一台 Windows VM，从 WSL Ubuntu 发起）和 E（测量工具直接在 E2B 宿主 VM 上运行，2026-10-15 是在 host a 上）例外。A/B/C 记录明确写了 Azure CLI 2.88.0 和 azd 1.34.1；A 的 SDK 记录还写了 Python 3.13。原始控制台输出和 ID 留在作者的私有目录里；[`tools/export_evidence.py`](tools/export_evidence.py) 把它们投影到 [`evidence/runs/`](evidence/runs/)，记录了每个私有源文件的 SHA-256，并把节点、pod 和命名空间名替换成中性标签。
 
-实测按 A→B→C→D 分组，同一路径内按日期从早到晚排列，与 README 表格的顺序一致。
+实测按 A→B→C→D→E 分组，同一路径内按日期从早到晚排列，与 README 表格的顺序一致。
 
 ### a-2026-09-27-setup：首次部署，以及用 HTTP 请求唤醒
 
@@ -207,7 +218,37 @@ workshop 的脚本（`module-01/setup.sh`、`module-03/prepare-agent-sandbox.sh`
 **边界。**
 - 只有一次，每种路由两个后续样本：不足以说明 gateway 和 direct 有差异。
 - direct 路由没有经过 Foundry 原生 AI gateway，因为那个门户步骤无法自动化。
-- 没有测空闲后的恢复和会话丢失。
+- 这次没有测空闲后的恢复和会话丢失；显式停止后的恢复见 `b-2026-10-15-sessions`。
+
+### b-2026-10-15-sessions：Foundry hosted agent，显式会话生命周期，共 3 次
+
+**问题。** B 创建会话、回答、停止，再在停止后回答，各要多久？停止前后，会话的文件和对话还在不在？
+
+**输入。** [`tools/measure_sessions.py`](tools/measure_sessions.py) 调用 module-02 的 agent 版本 `2`（0.5 vCPU / 1 GiB，`gpt-5.4-mini`，`MODEL_ROUTING=direct`），共 3 次（[`evidence/runs/b-sessions-2026-10-15/sessions.json`](evidence/runs/b-sessions-2026-10-15/sessions.json)）。每次：`POST .../endpoint/sessions` 固定到版本 `2`；`PUT .../files/content` 写入一个标记文件；第一个问题 "Where is Bangkok? Answer in one short sentence."；之后每一轮都问 "How many questions have I asked before this one? Number only."，并带上 `previous_response_id`；`POST .../sessions/{id}:stop` 后轮询到 `idle`；在同一个 `agent_session_id` 上发下一轮；读回标记文件；再问一轮；`DELETE` 会话。
+
+**变量与固定项。** 三次之间没有变量。固定项是 agent 版本、问题原文和客户端：Japan East 的一台 Windows VM（WSL Ubuntu）经 Azure API Management 网关调用 East US 2 的项目。客户端计时包含这段链路；服务端自己记录的 `created_at` → `completed_at` 单独列出。
+
+**结果。**
+
+<!-- BEGIN GENERATED: b-sessions -->
+单位为秒，客户端计时；最后一列是 agent 依次给出的回答。
+
+| 次 | 创建 → active | 第一个回答 | 后续 | 停止 → idle | 停止后回答 | 再下一轮 | 文件保留 | 回答 |
+|---|---:|---:|---:|---:|---:|---:|---|---|
+| 1 | 6.69 | 5.62 | 4.59 | 2.9 | 12.35 | 4.6 | 是 | Bangkok is the capital city of Thailand in Southeast Asia. / 2 / 3 / 4 |
+| 2 | 6.87 | 4.79 | 4.81 | 3.05 | 12.02 | 4.11 | 是 | Bangkok is the capital city of Thailand in Southeast Asia. / 2 / 3 / 4 |
+| 3 | 6.51 | 5.85 | 4.42 | 7.71 | 11.66 | 3.88 | 是 | Bangkok is the capital city of Thailand in Southeast Asia. / 2 / 3 / 4 |
+| **中位数** | **6.69** | **5.62** | **4.59** | **3.05** | **12.02** | **4.11** |  |  |
+
+共 35 次 HTTP 尝试：200 ×23、201 ×6、204 ×6；没有重试。
+<!-- END GENERATED: b-sessions -->
+
+服务端记录的每轮生成时间为 <!--v:b.sess.server.range-->1–4<!--/v--> s（整秒精度）；客户端计时的其余部分是网络链路、网关和平台。
+
+**边界。**
+- 只从一个客户端跑了三次：客户端计时包含 Japan East → East US 2 的往返和网关，不能与 2026-09-27 从中国发起的实测直接比较。
+- 恢复是在显式 `:stop` 之后测的，不是空闲超时之后。没有内存快照：agent 进程会重新启动，只有 `$HOME`、`/files` 和平台保存的对话会延续。
+- 一次只有一个会话；没有测并发和会话丢失。
 
 ### c-2026-09-27：AKS + agent-sandbox，隔离、pod 丢失、挂起和恢复
 
@@ -354,7 +395,10 @@ workshop 的脚本（`module-01/setup.sh`、`module-03/prepare-agent-sandbox.sh`
 
 <!-- BEGIN GENERATED: e-agent-input -->
 > 宿主机 VM：Standard_D4ds_v7；E2B `base` 模板（2 vCPU，512 MB，经 `beta_pause` 保存 Firecracker 内存+磁盘快照）。
+> 版本：E2B Python SDK `e2b 2.46.0`；E2B Embed 运行时 `588e5b9`。
 > 请求：POST <Foundry project>/openai/v1/responses with Prompt Agent calling function tool run_in_e2b_sandbox on E2B API :3000/:3002。
+> Agent 指令："You are a concise assistant with access to `run_in_e2b_sandbox`. For EVERY user message, first call `run_in_e2b_sandbox` once to inspect or update files in /home/user, then answer concisely as instructed. When asked for a number only or word only, reply with that exact token only."
+> 唯一的函数工具 `run_in_e2b_sandbox(python_code)`："Execute Python 3 code inside the session's isolated E2B Firecracker microVM sandbox on Azure."
 > 第一个问题："Where is Bangkok? Answer in one short sentence."
 > 之后每一轮："How many questions have I asked before this one? Number only."
 <!-- END GENERATED: e-agent-input -->
@@ -371,10 +415,10 @@ workshop 的脚本（`module-01/setup.sh`、`module-03/prepare-agent-sandbox.sh`
 | 3 | 0.06 | 8.38 | 8.44 | 3.92 | 0.15 | 0.09 | 4.64 | 4.73 | Bangkok is the capital city of Thailand. / 1 / 2 / 3 |
 | **中位数** | **0.07** | **4.12** | **4.26** | **2.95** | **0.13** | **0.09** | **6.4** | **6.48** |  |
 
-本机 20 次沙箱微基准（零跨网 RTT）：创建 0.051–0.089 s（n=20），热命令 0.007–0.01 s（n=20），暂停 0.051–1.81 s（n=20），恢复 0.086–0.62 s（n=20）。沙箱内读回：VMM `firecracker` `v1.14-0.2.0`，guest 内核 `6.1.177+`，宿主机内核 `6.17.0-1022-azure`。
+本机 20 次沙箱微基准（零跨网 RTT）：创建 0.051–0.089 s（n=20），热命令 0.007–0.01 s（n=20），暂停 0.051–1.81 s（n=20），恢复 0.086–0.62 s（n=20）。VMM `firecracker` `v1.14-0.2.0` 来自宿主机进程列表；guest 内核 `6.1.177+` 来自沙箱内的 `uname -r`；宿主机内核 `6.17.0-1022-azure`。
 <!-- END GENERATED: e-agent -->
 
-3 次 agent 实测的 `vmm_type` 都是 <!--v:e.vmm.value-->firecracker<!--/v-->，沙箱内的对话历史在暂停和恢复后继续增长的有 <!--v:e.state_kept.count-->3<!--/v--> 次（共 3 次）。VM 首次部署耗时 <!--v:e.setup.value-->177<!--/v--> s。
+宿主机进程列表里沙箱背后的 VMM 进程是 <!--v:e.vmm.value-->firecracker<!--/v-->，沙箱内的对话历史在暂停和恢复后继续增长的有 <!--v:e.state_kept.count-->3<!--/v--> 次（共 3 次）。VM 首次部署耗时 <!--v:e.setup.value-->177<!--/v--> s。
 
 **边界。**
 - 单台 East US 2 `Standard_D4ds_v7` VM 上的三次 agent 实测加 20 次本机微基准。
@@ -387,10 +431,12 @@ workshop 的脚本（`module-01/setup.sh`、`module-03/prepare-agent-sandbox.sh`
 **输入。** 与 D 对齐的压测脚本及下面这些原样输入（[`evidence/runs/e-e2b-2026-10-14/perf.json`](evidence/runs/e-e2b-2026-10-14/perf.json)）：
 
 <!-- BEGIN GENERATED: e-perf-input -->
-> 请求：POST <Foundry project>/openai/v1/responses {"input": <input>} with Prompt Agent calling E2B sandbox tool。
-> 新会话："Reply with exactly COLD-{i}"（n = 1、2、3、4、5）
-> 同一会话："Remember the code word LANTERN-7. Reply only OK."，然后 "What is the code word? Reply with the word only."，再 "Reply with exactly WARM-{i}"（n = 1、2）
-> 并发时每个会话："Remember SCALE-{i}. Reply only OK."，然后 "What did I ask you to remember? Word only."
+> 请求：POST <Foundry project>/openai/v1/responses {"input": <input>} with Prompt Agent calling E2B sandbox tool；agent 指令和工具与 `e-2026-10-14-agent` 相同。
+> 新会话："Use run_in_e2b_sandbox to print COLD-{i}, then reply with exactly COLD-{i}"（n = 1、2、3、4、5）
+> 同一会话："Use run_in_e2b_sandbox to save the code word LANTERN-7 to /home/user/codeword.txt. Reply only OK."，然后 "Use run_in_e2b_sandbox to read /home/user/codeword.txt. What is the code word? Reply with the word only."，再 "Use run_in_e2b_sandbox to verify the sandbox is alive, then reply with exactly WARM-1"，再 "Use run_in_e2b_sandbox to verify the sandbox is alive, then reply with exactly WARM-2"
+> 并发时每个会话："Use run_in_e2b_sandbox to write SCALE-{k} to /home/user/scale.txt. Reply only OK."，然后 "Use run_in_e2b_sandbox to read /home/user/scale.txt. What did I ask you to remember? Word only."
+> 替换：一个存活会话先发 "Use run_in_e2b_sandbox to write LANTERN-7 to /home/user/live.txt. Reply only OK."；另一个沙箱被删除并替换后，再发 "Use run_in_e2b_sandbox to read /home/user/live.txt. What is the code word? Reply with the word only."
+> 驱动：作者的私有脚本 `run_abcd_matched_benchmarks.py`（SHA-256 `8e8f6fc5b7b6…` 记在记录里）；`tools/measure_e2b.py perf` 用同样的 agent、问题和计时。
 <!-- END GENERATED: e-perf-input -->
 
 **变量与固定项。** 冷启动重复 5 个新会话；并发在 1 台 `Standard_D4ds_v7` VM 上分别测试 4 和 8 个并发会话。
@@ -412,9 +458,9 @@ workshop 的脚本（`module-01/setup.sh`、`module-03/prepare-agent-sandbox.sh`
 同一会话的后续回答：
 
 <!-- BEGIN GENERATED: e-warm -->
-| 轮次 | 回答 | 沙箱工具耗时，s | 客户端耗时，s |
+| 轮次 | 回答 | 沙箱工具耗时，s | 轮次耗时，s |
 |---|---|---:|---:|
-| 1（新会话） | OK | 0.14 | 2.76 |
+| 1（新会话；含沙箱创建） | OK | 0.14 | 2.76 |
 | 2 | LANTERN-7 | 0.033 | 5.03 |
 | 3 | WARM-1 | 0.029 | 3.19 |
 | 4 | WARM-2 | 0.028 | 3.39 |
@@ -423,17 +469,163 @@ workshop 的脚本（`module-01/setup.sh`、`module-03/prepare-agent-sandbox.sh`
 并发与沙箱替换：
 
 <!-- BEGIN GENERATED: e-scale -->
-| 并发 | 回答 | 拒绝 | 并发 Firecracker VM 数 | 第 1 轮耗时，s |
-|---:|---|---|---:|---|
-| 4 | 4/4 | 0/4 | 7 | 3.9, 3.12, 3.9, 3.17 |
-| 8 | 8/8 | 0/8 | 9 | 4.59, 2.48, 4.63, 6.94, 5.4, 3.7, 7.34, 3.82 |
+| 并发 | 回答 | 拒绝 | 沙箱创建 + 第 1 轮，s |
+|---:|---|---|---|
+| 4 | 4/4 | 0/4 | 3.9, 3.12, 3.9, 3.17 |
+| 8 | 8/8 | 0/8 | 4.59, 2.48, 4.63, 6.94, 5.4, 3.7, 7.34, 3.82 |
 
-`kill` 删除沙箱后的替换：新 Firecracker 沙箱在 0.1 s 内就绪；另一个存活会话的追问 HTTP 200，2.61 s，"LANTERN-7"，保留状态：true。
+`kill` 删除沙箱后的替换：新 Firecracker 沙箱在 0.1 s 内就绪；另一个存活会话的追问 HTTP 200，2.61 s，"LANTERN-7"，保留状态：true。本次不公布同时运行的 micro-VM 数：驱动用 `pgrep -fc` 计数，把它自己的 shell 也算了进去。
 <!-- END GENERATED: e-scale -->
 
 **边界。**
-- 单台 VM 部署（`Standard_D4ds_v7`，4 vCPU / 16 GiB 内存）。8 并发时，其中一个追问轮次（`SCALE-8`）因模型与工具串行等待耗时 78.99 s，全部 8/8 会话均成功回答并记住了各自口令。
-- 与 D 的恢复测试一致，`kill` 删除沙箱后的追问发给另一个存活会话（`LANTERN-7`），证明宿主机继续正常服务且替代沙箱在 <!--v:e.pod_lost.value-->0.1<!--/v--> s 内就绪。
+- 单台 VM 部署（`Standard_D4ds_v7`，4 vCPU / 16 GiB 内存）。8 并发时，其中一个追问轮次（`SCALE-8`）用了 78.99 s，全部 8/8 会话都回答并记住了各自的口令；记录里没有这段时间花在哪里。
+- 与 D 的恢复测试一样，`kill` 删除沙箱后的追问发给了另一个存活会话（`LANTERN-7`）：宿主机继续服务，替代沙箱在 <!--v:e.pod_lost.value-->0.1<!--/v--> s 内就绪。它不能证明被删沙箱的连续性。
+- 这些数字来自作者的私有驱动脚本；`tools/measure_e2b.py perf` 复现了它的 agent、问题和计时，但产生这份记录的不是它。
+
+### e-2026-10-15-latest：最新 E2B SDK，以及 E2B 官方 code-interpreter 模板
+
+**问题。** 最新的 E2B Python SDK（`2.56.0`，2026-10-13 发布）在这套 Embed 上还能跑通实测协议吗？E2B 自己的 code-interpreter 模板（`e2b-code-interpreter 2.11.0`）能建起来并正常工作吗？
+
+**输入。** 在 `e-2026-10-15-multi` 的 host a 上（[`evidence/runs/e-e2b-2026-10-15/latest.json`](evidence/runs/e-e2b-2026-10-15/latest.json)）：
+
+<!-- BEGIN GENERATED: e-latest-input -->
+> SDK 检查：`tools/measure_e2b.py agent --runs 3`，`e2b 2.56.0`（Python 3.12.3），工具 SHA-256 `036dc81db607…`；"Where is Bangkok? Answer in one short sentence."，然后 3 次 "How many questions have I asked before this one? Number only."，第二轮后暂停 5 s。
+> code-interpreter：模板 `code-interpreter-v1`（2 vCPU，2048 MB），来自 [`e2b-dev/code-interpreter@162a2a2`](https://github.com/e2b-dev/code-interpreter/tree/162a2a25b6a5ea5806749a437b96cbdc5bfc087e/template)，用其原样的 `template/build_prod.py` 构建（构建环境 `e2b 2.32.0`）；用 `e2b-code-interpreter 2.11.0` 和 `tools/measure_code_interpreter.py` 检查。
+> 按顺序执行的代码单元（不经模型）："x = 1"、"x+=1; x"、pandas 求和、matplotlib 画图、JavaScript "[1, 2, 3].reduce((a, b) => a + b)"、"1/0"，暂停并恢复后再执行 "x"。
+<!-- END GENERATED: e-latest-input -->
+
+**变量与固定项。** SDK 检查沿用 `e-2026-10-14-agent` 的 agent、问题、协议和计时，在 host a 上用 `e-2026-10-15-multi` 的同一版工具运行。与 `e-2026-10-14-agent` 相比，换了 SDK（2.46.0 → 2.56.0）和程序（私有驱动脚本 → `tools/measure_e2b.py`）；host a 此后启动的内核是 `7.0.0-1017-azure`，系统盘是 Standard HDD。code-interpreter 模板用 E2B 原样的脚本构建；两次构建之间我们调大了三项宿主机设置，列在构建表下面。4 次检查用的是同一个模板和同样的步骤。
+
+**结果。** SDK 检查：
+
+<!-- BEGIN GENERATED: e-latest-sdk -->
+| 次 | 创建 → Running | 第一个回答 | 冷启动 | 后续 | 暂停 | 恢复 | 恢复后回答 | 恢复 → 回答 | 回答 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---|
+| 1 | 0.1 | 5.24 | 5.34 | 3.7 | 0.15 | 0.08 | 6.72 | 6.8 | Bangkok is the capital city of Thailand in Southeast Asia. / 1 / 2 / 3 |
+| 2 | 0.06 | 4.93 | 4.99 | 4.24 | 0.14 | 0.08 | 6.2 | 6.28 | Bangkok is the capital city of Thailand. / 1 / 2 / 3 |
+| 3 | 0.06 | 4.0 | 4.06 | 35.02 | 0.17 | 0.11 | 8.14 | 8.25 | Bangkok is the capital city of Thailand. / 2 / 3 / 4 |
+| **中位数** | **0.06** | **4.93** | **4.99** | **4.24** | **0.15** | **0.08** | **6.72** | **6.8** |  |
+
+模型 HTTP 尝试：200 ×24。历史在 3 次中有 3 次按 1、2、3、4 增长；没有遗留沙箱。
+<!-- END GENERATED: e-latest-sdk -->
+
+构建 `code-interpreter-v1`（共 30 步）：
+
+<!-- BEGIN GENERATED: e-latest-build -->
+| 次 | HUGEPAGES | 构建工作空间，MiB | 系统盘，GB | 结果 | 秒 |
+|---:|---:|---:|---:|---|---:|
+| 1 | 2048 | 512 | 50 | 第 6/30 步失败：恢复构建 VM 时 `mmap memfd: cannot allocate memory` | 104.5 |
+| 2 | 4096 | 512 | 50 | 第 8/30 步失败：构建 VM 里的 `pip install`：`[Errno 28] No space left on device` | 56.5 |
+| 3 | 4096 | 8192 | 50 | 我们在第 12/30 步停止：系统盘剩余不到 8 GiB，而 E2B 的数据库也在这块盘上 | 501 |
+| 4 | 4096 | 8192 | 128 | 建成，30/30 步；第 1–11 步用第 3 次的缓存 | 426 |
+
+到第 12 步时，第 3 次已写入 12839 MiB 模板和 10140 MiB 编排器目录数据，系统盘只剩 5084 MiB；第 4 次又用掉 29 GiB（剩余 93 → 64 GiB）。我们改了这些：Compose `.env` 里的 `HUGEPAGES` 2048 → 4096，再执行 `docker compose up -d --wait`；测试团队的构建工作空间（`disk_mb`）512 → 8192 MiB，做法是往 Embed 内部的 `project_limits` 表加一行；系统盘 50 → 128 GB（释放、拍快照、`az disk update --size-gb`、开机）。
+<!-- END GENERATED: e-latest-build -->
+
+检查，共 4 次：
+
+<!-- BEGIN GENERATED: e-latest-ci -->
+| 步骤 | 通过 | 秒，最小–最大 | 第 4 次的观察 |
+|---|---:|---:|---|
+| `create (default template)` | 4/4 | 0.116–0.194 |  |
+| `README: x = 1` | 4/4 | 0.082–0.11 |  |
+| `README: x+=1; x` | 4/4 | 0.011–0.012 | `2` |
+| `pandas sum` | 4/4 | 0.565–1.303 | `10` |
+| `matplotlib png` | 4/4 | 0.977–3.317 | `png` |
+| `javascript kernel` | 0/4 | 0.03–0.064 | `"<template id>"[(1 , 2 , 3)].reduce is not a function` |
+| `exception` | 4/4 | 0.038–0.042 | `ZeroDivisionError` |
+| `pause` | 4/4 | 0.157–0.4 |  |
+| `connect (resume)` | 4/4 | 0.233–0.902 |  |
+| `x after resume` | 4/4 | 0.088–0.652 | `2` |
+| `kill` | 4/4 | 0.057–0.746 |  |
+
+JavaScript 失败的原因（在新沙箱里复现）：新沙箱的第一个单元就是这段 JavaScript，再执行一次同样的单元：`TypeError` → `6`；先执行一个 Python 单元，再执行这段 JavaScript（检查里的顺序）：成功 → `TypeError`；在这段 JavaScript 前加一个分号：`6`。在 `162a2a2` 的 `template/server/messaging.py` 里，第 160 行写出的 `process.env['KEY'] = 'VALUE'` 不带分号，第 351–361 行在一个上下文第一次执行时把这些语句放在用户代码前面，于是以 `[` 开头的代码接到了最后一句上。以 `console.log` 或数字开头的代码可以正常执行。
+<!-- END GENERATED: e-latest-ci -->
+
+**边界。**
+- 用 Embed 的默认值建不起官方模板：大页池、构建工作空间和 50 GB 系统盘各卡住过一次。构建工作空间是往 Embed 内部的 `project_limits` 表里加一行调大的，E2B 没有为此写文档；这次结果只说明模板能工作，不代表这是受支持的配置。
+- 构建所需磁盘只来自这一次：第 4 次的第 1–11 步复用了第 3 次的缓存，从零构建大约要两者之和，这一点没有实测。
+- 每个 `code-interpreter-v1` 沙箱是 2048 MB，是 `base` 的四倍；一台主机能放几个没有实测。
+- JavaScript 的失败在 E2B 的模板服务端，与 Azure 和宿主机无关；运行同一份服务端代码的 E2B Cloud 是否同样失败，没有检查。
+- 2026-10-15T16:48Z 订阅的自动化在清理前把 host a 释放了，所以调大的设置和建好的模板还留在它的盘上。
+
+### e-2026-10-15-multi：两台独立 Azure VM 上的 E2B
+
+**问题。** E2B Embed 按设计只有一台机器。再装一套独立的能带来什么：换一台 VM 结果是否一致？客户端把会话分到两台上，容量能否相加？一台的 E2B 停掉后还剩下什么？
+
+**输入。** 两台 VM，每个阶段都由 host a 上的同一个工具运行（[`evidence/runs/e-e2b-2026-10-15/multi.json`](evidence/runs/e-e2b-2026-10-15/multi.json)）：
+
+<!-- BEGIN GENERATED: e-multi-input -->
+> 工具：`tools/measure_e2b.py`（SHA-256 `036dc81db607…`）；host b 上的 agent 实测用的是前一版 `89255d0b00a3…`，那一版还不记录 HTTP 状态。agent 指令、工具定义和问题与 `e-2026-10-14-agent`、`e-2026-10-14-perf` 相同。
+> Host a：`Standard_D4ds_v7`，zone `1`，宿主机内核 `7.0.0-1017-azure`，Docker `29.9.0`，系统盘 `Standard HDD (Standard_LRS) · 50 GB`，`HUGEPAGES=2048`；2026-10-14 为 `e-2026-10-14-agent` 安装，夜间释放；开机后按 E2B 指南对重启的要求执行一次 `docker compose up -d --wait`。
+> Host b：`Standard_D4ds_v7`，zone `1`，宿主机内核 `6.17.0-1022-azure`，Docker `29.9.1`，系统盘 `Premium SSD P6 (Premium_LRS) · 50 GB`，`HUGEPAGES=2048`；2026-10-15 按 README 第 7 步安装（`588e5b9` 的 `compose.yaml` 和 `.env`，SHA-256 均校验通过），用时 175 s。
+> 网络：两台主机在同一子网和可用区；工具在 host a 上运行，经私网访问 host b 的 `3000` 和 `3002` 端口；host b 的 NSG 只允许 host a 的私网地址访问这两个端口，不放行其他入站流量。
+> host b 上的 agent 实测："Where is Bangkok? Answer in one short sentence."，然后 3 次 "How many questions have I asked before this one? Number only."，第二轮后暂停 5 s。
+> 单台并发（host a）：8 个会话；在此之前先跑一个新会话 "Use run_in_e2b_sandbox to print COLD-1, then reply with exactly COLD-1" 和一个以 "Use run_in_e2b_sandbox to save the code word LANTERN-7 to /home/user/codeword.txt. Reply only OK." 开头的会话。
+> 并发时每个会话："Use run_in_e2b_sandbox to write SCALE-{k} to /home/user/scale.txt. Reply only OK."，然后 "Use run_in_e2b_sandbox to read /home/user/scale.txt. What did I ask you to remember? Word only."。
+> 停一台：每台各有一个存活会话（"Use run_in_e2b_sandbox to write LANTERN-7 to /home/user/live.txt. Reply only OK."）和一个暂停的沙箱（"Use run_in_e2b_sandbox to write PAUSED-{h} to /home/user/paused.txt. Reply only OK."，`{h}` 为主机名）；然后在 host a 上执行 `docker compose stop`（VM 不关），之后再 `docker compose up -d --wait`；读回时发 "Use run_in_e2b_sandbox to read /home/user/live.txt. What is the code word? Reply with the word only." 和 "Use run_in_e2b_sandbox to read /home/user/paused.txt. What does it say? Word only."。
+> 空闲容量：在 host a 上逐个 `Sandbox.create("base")`，不调模型、不跑命令，直到创建被拒，共 3 次。
+<!-- END GENERATED: e-multi-input -->
+
+**变量与固定项。** 固定：VM 规格、镜像、可用区、E2B 提交、compose 文件、大页池、SDK `e2b 2.46.0`、模型、agent 和问题。变化：主机，以及会话分到几台主机上。未固定：host a 的内核和系统盘与 host b 不同（见下）。
+
+**结果。** host b 上的 3 次 agent 协议：
+
+<!-- BEGIN GENERATED: e-multi-agent -->
+| 次 | 创建 → Running | 第一个回答 | 冷启动 | 后续 | 暂停 | 恢复 | 恢复后回答 | 恢复 → 回答 | 回答 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---|
+| 1 | 0.09 | 5.58 | 5.67 | 6.9 | 0.15 | 0.08 | 6.87 | 6.95 | Bangkok is the capital city of Thailand, in Southeast Asia. / 1 / 2 / 3 |
+| 2 | 0.06 | 3.85 | 3.91 | 5.92 | 0.11 | 0.1 | 7.05 | 7.15 | Bangkok is the capital city of Thailand. / 1 / 2 / 3 |
+| 3 | 0.06 | 45.56 | 45.62 | 3.6 | 0.12 | 0.08 | 45.53 | 45.61 | Bangkok is the capital city of Thailand. / 1 / 2 / 3 |
+| **中位数** | **0.06** | **5.58** | **5.67** | **5.92** | **0.12** | **0.08** | **7.05** | **7.15** |  |
+
+沙箱内的历史在 3 次中有 3 次按 1、2、3、4 增长。第 3 次慢在模型轮次：第一个回答用了 45.56 s，其中沙箱命令只占 0.11 s。
+<!-- END GENERATED: e-multi-agent -->
+
+同时开多个会话：
+
+<!-- BEGIN GENERATED: e-multi-scale -->
+| 阶段 | 同时会话 | 回答 | 拒绝 | 拒绝原因 | 沙箱创建，s | 整个会话，s | 模型 HTTP 尝试 |
+|---|---:|---|---|---|---:|---:|---|
+| 仅 host a | 8 | 7/8 (a 7/8) | 1/8 | `cannot allocate memory` | 0.164–0.53 | 8.03–25.65 | 200 ×28 |
+| host a 和 b | 16 | 14/16 (a 7/8，b 7/8) | 2/16 | `cannot allocate memory` | 0.147–0.432 | 8.57–42.09 | 200 ×56, 500 ×2 |
+
+客户端把 16 个会话轮流分给两台主机。每次拒绝都是 E2B 的 `500: Failed to place sandbox`，背后是编排器的 `cannot allocate memory`；模型返回的 2 次 HTTP 500 都在同一轮内重试成功，这些会话照常回答。
+<!-- END GENERATED: e-multi-scale -->
+
+host a 上的空闲 `base` 沙箱：
+
+<!-- BEGIN GENERATED: e-multi-idle -->
+| 次 | 被拒前创建成功 | 拒绝原因 | 已占大页：开始 → 被拒时 | 全部删除后 |
+|---:|---:|---|---|---|
+| 1 | 5 | `error setting fc metrics (connection refused)` | 75 → 1355 | 75 页，0 个沙箱 |
+| 2 | 7 | `cannot allocate memory` | 75 → 1867 | 75 页，0 个沙箱 |
+| 3 | 7 | `cannot allocate memory` | 75 → 1867 | 75 页，0 个沙箱 |
+
+每页 2 MiB。每个 `base` 沙箱（512 MiB）在创建时就预留 256 页，不论是否空闲。大页池共 2048 页，Compose 栈里的 postgres 占 75 页，剩下 1973 页，能放下 7 个沙箱。第 1 次因为另一个错误提前停止。
+<!-- END GENERATED: e-multi-idle -->
+
+用 `docker compose stop` 停掉 host a 的 E2B（VM 不关）：
+
+<!-- BEGIN GENERATED: e-multi-hostloss -->
+| 检查项 | 观察结果 |
+|---|---|
+| host b，存活会话：读回文件 | 成功，4.72 s, "LANTERN-7" |
+| host b：新会话 | 成功，4.38 s, "COLD-1" |
+| host b：恢复 host a 上暂停的沙箱 | 失败：`SandboxNotFoundException: Paused sandbox … not found` |
+| host a 停止中：创建 | 失败：`connection refused` |
+| host a 停止中：恢复自己暂停的沙箱 | 失败：`connection refused` |
+| host a 重启后：恢复自己暂停的沙箱 | 成功，4.72 s, "PAUSED-a" |
+| host a 重启后：停止时正在运行的沙箱 | 失败：`SandboxNotFoundException: Paused sandbox … not found` |
+| host a 重启后：新会话 | 成功，4.09 s, "COLD-2" |
+| `docker compose stop` / `docker compose up -d --wait` | 73.69 s / 59.55 s |
+<!-- END GENERATED: e-multi-hostloss -->
+
+**边界。**
+- 这是两套独立安装加一个把会话分给它们的客户端，不是 E2B 集群：没有共享调度、没有故障转移、没有共享存储。每台的会话数可以相加；暂停的沙箱只能在暂停它的那台主机上恢复。
+- 停一台用的是在运行中的 VM 上 `docker compose stop`。VM 或磁盘丢失，以及官方 Terraform 模块的规模集用新盘替换实例，都没有实测。
+- 两台主机并不完全相同：host a 夜间释放后启动的内核是 `7.0.0-1017-azure`，它的系统盘在 2026-10-14 实测之后被订阅策略从 Premium SSD 改成了 Standard HDD；host b 是 `6.17.0-1022-azure`，Premium SSD。
+- 每个阶段只跑了一次；容量针对的是 512 MB 的 `base` 模板、`Standard_D4ds_v7` 上 Compose 默认的大页池。
 
 ### 可以重算的数字
 
@@ -507,14 +699,16 @@ CI 在 Ubuntu 和 Windows 上用 Python 3.12 运行同样的检查（[工作流]
 
 **边界。**
 
-- `LOCAL_MEASUREMENT`：A 的完整 agent 时延 n=3；B 和 C 各是一轮端到端实测；D 是一轮压测，其中镜像已缓存的冷启动 n=5、后续回答 n=3，会话落地和恢复各一次。依赖某个数字之前，请按本页在线测量命令重新测。
-- `LOCAL_MEASUREMENT`：A 和 C 使用 workshop reflection agent；B 使用 Agent Framework 和 ResponsesHostServer；D 使用私有预览 sample。B 和 D 包含 Foundry 端点和位于中国的客户端（往返 <!--v:d.client_rtt.range-->320–800<!--/v--> ms）；A 的回答在沙箱内计时；C 在它的 LoadBalancer 处计时。表中每一行比较的是现场实现，不是相同容器或相同网络链路。
+- `LOCAL_MEASUREMENT`：A 的完整 agent 时延 n=3；B 是一轮端到端实测加三次会话接口实测，C 是一轮端到端实测；D 是一轮压测，其中镜像已缓存的冷启动 n=5、后续回答 n=3，会话落地和恢复各一次。依赖某个数字之前，请按本页在线测量命令重新测。
+- `LOCAL_MEASUREMENT`：A 和 C 使用 workshop reflection agent；B 使用 Agent Framework 和 ResponsesHostServer；D 使用私有预览 sample。B 的 2026-09-27 实测和 D 包含 Foundry 端点和位于中国的客户端（往返 <!--v:d.client_rtt.range-->320–800<!--/v--> ms）；B 的 2026-10-15 实测客户端在 Japan East，并经过 API Management 网关；A 的回答在沙箱内计时；C 在它的 LoadBalancer 处计时。表中每一行比较的是现场实现，不是相同容器或相同网络链路。
 - `LOCAL_MEASUREMENT`：A 加上私有 Blob 卷后创建耗时为 <!--v:a.attr.vnetvolume.range-->15.79–25.12<!--/v--> s；只加镜像、VNet 或端口时为 <!--v:a.attr.small.range-->1.6–2.7<!--/v--> s。
 - `LOCAL_MEASUREMENT`：最早的 D 会话 pod 在创建至少 <!--v:d.idle.value-->87<!--/v--> 分钟后仍是 Running。这是 pod 的年龄，不是空闲时长：没有保留最后一次请求的时间戳。它不能证明配置的空闲超时，也不能证明期间始终空闲。
 - `LOCAL_MEASUREMENT`：按示例的 500m CPU / 1 Gi 请求加 600 Mi Kata 开销，D 每个 `Standard_D4s_v5` 节点最多容纳 <!--v:d.capacity.per_node-->5<!--/v--> 个会话；同时运行系统 pod 的节点更少。
-- `NOT_MEASURED`：B 的恢复和会话丢失；A 的宿主机丢失；服务端结束会话后 D 的行为；由 Foundry 治理的 agent 按任务调用 ACA 沙箱；有空闲容量时的并发时延；E2B 或其他第三方沙箱。
+- `NOT_MEASURED`：B 在空闲超时后的恢复（显式停止后的恢复见 `b-2026-10-15-sessions`）和会话丢失；A 的宿主机丢失；服务端结束会话后 D 的行为；由 Foundry 治理的 agent 按任务调用 ACA 沙箱；有空闲容量时的并发时延；E2B 以外的其他第三方沙箱；E2B Bring Your Own Cloud 和 private cloud；E2B 官方的 Azure Terraform 模块，包括它用新盘替换不健康实例的规模集行为；整台 E2B VM 或其磁盘丢失。
+- `SOURCE_FACT`：E2B Embed“is one machine, by design”；E2B 超出单机的方式是 private cloud（开发中）、由 E2B 在你的账号里运维的 Bring Your Own Cloud，以及 E2B Cloud（[Embed](https://github.com/e2b-dev/runtime/blob/588e5b9500b0987bc5a700d91483b03f0ae7d2a2/embed/README.md#when-one-node-is-not-enough)）。它只提供明文 HTTP，自身不带 TLS。Azure Terraform 安装方式是只有一台实例的规模集，没有持久数据卷：替换出的实例从新盘启动，自建的模板会丢失；停掉服务栈后，`/health` 不响应约两分钟，实例就会被替换（[Azure 指南](https://github.com/e2b-dev/runtime/blob/588e5b9500b0987bc5a700d91483b03f0ae7d2a2/embed/terraform/azure/README.md#limitations)）。
+- `SOURCE_FACT`：E2B 的 Compose 指南要求按“同时运行的沙箱数”设定 `HUGEPAGES`，并写明 512 MiB 的 `base` 沙箱满内存时占 256 页、空闲时约 90 页（[requirements](https://github.com/e2b-dev/runtime/blob/588e5b9500b0987bc5a700d91483b03f0ae7d2a2/embed/compose/README.md#requirements)）。在 `e-2026-10-15-multi` 中，每个空闲的 `base` 沙箱在创建时就预留了 256 页，所以默认大页池只放下 7 个，不是约 20 个。
 - `SOURCE_FACT`：ACA Sandboxes 从“prewarmed pools for near-instant availability”启动，恢复“with sub-second restore times”（[概览](https://learn.microsoft.com/azure/container-apps/sandboxes-overview)）。可选档位（vCPU / GB）：XS 0.25 / 0.5、S 0.5 / 1、M 1 / 2、L 2 / 4、XL 4 / 8。可配置空闲自动挂起；Memory 保存内存和磁盘，Disk 只保存磁盘。本次 900 s 是本地设置，不是全服务默认值。
-- `SOURCE_FACT`：hosted agent 运行在“per-session VM-isolated sandboxes”中，保留 `$HOME` 和 `/files`；空闲超时 2–60 分钟，默认 15；30 天不活跃后删除会话（[hosted agents](https://learn.microsoft.com/azure/foundry/agents/concepts/hosted-agents)）。
+- `SOURCE_FACT`：hosted agent 运行在“per-session VM-isolated sandboxes”中，保留 `$HOME` 和 `/files`；空闲超时 2–60 分钟，默认 15；30 天不活跃后删除会话（[hosted agents](https://learn.microsoft.com/azure/foundry/agents/concepts/hosted-agents)）。用 `POST .../sessions/{id}:stop` 停止会话会结束算力并保留持久文件系统（[管理会话](https://learn.microsoft.com/azure/foundry/agents/how-to/manage-hosted-sessions#stop-a-session)）。
 - `SOURCE_FACT`：hosted agent 的[沙箱规格](https://learn.microsoft.com/azure/foundry/agents/concepts/hosted-agents#sandbox-sizes)为 0.5 vCPU / 1 GiB、1 vCPU / 2 GiB、2 vCPU / 4 GiB；agent 版本上设置的值作用于每个会话，不选择 VM SKU。workshop 的 module-02 使用 0.5 vCPU / 1 GiB。
 - `SOURCE_FACT`：AKS Pod Sandboxing 由 Azure Linux 主机 + Microsoft Hyper-V + Cloud Hypervisor + Kata Containers 组成；节点 VM 必须是支持嵌套虚拟化的第 2 代规格；每个 pod VM 的内存等于 pod 的内存 limit（未设置时为 512 Mi），CPU limit 的小数部分向上取整到整数 vCPU（[pod sandboxing](https://learn.microsoft.com/azure/aks/use-pod-sandboxing)）。
 - `SOURCE_FACT`：agent-sandbox v0.5.2 支持绝对到期时间 `shutdownTime`；到期后删除 pod 和 Service，`shutdownPolicy` 决定是否保留 Sandbox 对象（[官方 API](https://github.com/kubernetes-sigs/agent-sandbox/blob/v0.5.2/docs/api.md)）。这是定时到期回收，不是按请求计时的空闲检测；`operatingMode` 仍提供显式挂起和恢复。
@@ -529,7 +723,7 @@ CI 在 Ubuntu 和 Windows 上用 Python 3.12 运行同样的检查（[工作流]
 
 **目录。**
 
-- [`tools/`](tools/)：`aca_sandbox.py`、`measure_aca.py`、`measure_responses.py`、`measure_e2b.py`、`check_isolation.py`（在线）；`export_evidence.py`（仅作者可运行）、`build_measurements.py`、`render_docs.py`、`build_diagrams.py`、`validate_docs.py`（离线）。
+- [`tools/`](tools/)：`aca_sandbox.py`、`measure_aca.py`、`measure_responses.py`、`measure_e2b.py`、`measure_code_interpreter.py`、`measure_sessions.py`、`check_isolation.py`（在线）；`export_evidence.py`（仅作者可运行）、`build_measurements.py`、`render_docs.py`、`build_diagrams.py`、`validate_docs.py`（离线）。
 - [`evidence/claims.json`](evidence/claims.json)：A–D 的 canonical 名称、状态、归属、隔离边界、选型合同、字母映射和实测顺序；[`evidence/runs/`](evidence/runs/)：脱敏后的实测记录，带私有源文件的 SHA-256，以及 `INDEX.json`；[`evidence/measurements.json`](evidence/measurements.json)：所有发布的指标。
 - [`images/`](images/)：架构图、它们的生成源 `tools/build_diagrams.py`、8 个 Azure 图标和 [`SOURCES.json`](images/SOURCES.json)。
 - [`config/.env.example`](config/.env.example)：全部配置项；[`tests/`](tests/)：离线测试和测试数据。
@@ -539,4 +733,5 @@ CI 在 Ubuntu 和 Windows 上用 Python 3.12 运行同样的检查（[工作流]
 - Microsoft Learn：[Container Apps Sandboxes 概览](https://learn.microsoft.com/azure/container-apps/sandboxes-overview) · [Foundry Agent Service 的 Hosted agents](https://learn.microsoft.com/azure/foundry/agents/concepts/hosted-agents) · [AKS Pod sandboxing](https://learn.microsoft.com/azure/aks/use-pod-sandboxing) · [Azure 架构图标](https://learn.microsoft.com/azure/architecture/icons/)
 - [agent-sandbox v0.5.2](https://github.com/kubernetes-sigs/agent-sandbox/releases/tag/v0.5.2) · [agenthost workshop，固定在 905f2c2](https://github.com/oxcp/ainotes/tree/905f2c2/agenthost)（没有许可证文件；只引用，不复制）
 - [PyPI 上的 `azure-containerapps-sandbox`](https://pypi.org/project/azure-containerapps-sandbox/)（0.1.0b4）
+- E2B：[Embed（588e5b9）](https://github.com/e2b-dev/runtime/tree/588e5b9500b0987bc5a700d91483b03f0ae7d2a2/embed) · [code-interpreter 模板（162a2a2）](https://github.com/e2b-dev/code-interpreter/tree/162a2a25b6a5ea5806749a437b96cbdc5bfc087e/template)
 - BYO-AKS 私有预览示例和接入指南：由产品组提供，需申请访问。
