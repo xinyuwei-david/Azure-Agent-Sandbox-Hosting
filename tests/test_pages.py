@@ -74,7 +74,29 @@ def test_comparison_keeps_the_full_table_and_only_changes_wrapping(lang):
     assert vd.numbers(block) == vd.numbers(original)
 
 
+@pytest.mark.parametrize("lang", ("en", "zh"))
+def test_cold_formulas_distinguish_component_sums_from_derived_remainder(lang):
+    metrics, runs = rd.load_inputs()
+    c = rd.Ctx(metrics, runs, lang)
+    row = rd.cold_start_formulas(c)
+    assert len(row) == 6
+    for col in (1, 2, 3, 5):
+        assert re.findall(r"\$(.*?)\$", row[col]) == [
+            r"T_{\mathrm{cold}}", r"= T_{\mathrm{ready}}", r"+ T_{\mathrm{first}}"]
+    assert re.findall(r"\$(.*?)\$", row[4]) == [
+        r"T_{\mathrm{cold}}", r"= T_{\mathrm{pod}}", r"+ T_{\mathrm{other}}"]
+    assert metrics["d.first_after_ready"]["label"] == "DERIVED"
+    for cell in row:
+        assert re.findall(r"\$(.*?)\$", rd.wrap_table_cell(cell)) == re.findall(r"\$(.*?)\$", cell)
+    _, details, _ = rd.comparison_details(c)
+    assert details[0] == row
+    boundary = "not a separately timed Ready → answer interval" if lang == "en" else "不是独立计时的 Ready → 回答"
+    assert boundary.casefold() in row[4].casefold()
+    assert boundary.casefold() in details[3][4].casefold()
+
+
 @pytest.mark.parametrize("cell", [
+    r"$T_{\mathrm{cold}}$<br>$= T_{\mathrm{ready}}$<br>$+ T_{\mathrm{first}}$",
     "`POST .../endpoint/sessions`", "`500 session_creation_failed`", "`b-2026-10-15-sessions`",
     "[documented](https://example.com/path_with_underscores?key=value)",
     "**6.19 s** (2.31 s + 3.88 s, medians of separate runs)",

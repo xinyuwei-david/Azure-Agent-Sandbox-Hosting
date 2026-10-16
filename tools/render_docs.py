@@ -94,6 +94,30 @@ def quote(lines: list[str]) -> str:
 
 # --- README blocks --------------------------------------------------------------------------------
 
+def cold_start_formulas(c: Ctx) -> list[str]:
+    summed = r"$T_{\mathrm{cold}}$<br>$= T_{\mathrm{ready}}$<br>$+ T_{\mathrm{first}}$"
+    residual = r"$T_{\mathrm{cold}}$<br>$= T_{\mathrm{pod}}$<br>$+ T_{\mathrm{other}}$"
+    return [
+        c.t("**Cold-start formula**<br>All terms: durations in seconds.",
+            "**冷启动公式**<br>各项均为耗时，单位：秒。"),
+        summed + "<br><br>" + c.t(
+            "**Ready:** sandbox create → Running<br>**First:** first request → answer, timed inside the sandbox.<br>Two timers added.",
+            "**Ready**：沙箱创建 → Running<br>**First**：首轮请求 → 回答，在沙箱内计时。<br>两段计时相加。"),
+        summed + "<br><br>" + c.t(
+            "**Ready:** create session → `active`<br>**First:** first request → answer on the active session.<br>Two client requests added.",
+            "**Ready**：创建会话 → `active`<br>**First**：就绪会话的首轮请求 → 回答。<br>两次客户端请求耗时相加。"),
+        summed + "<br><br>" + c.t(
+            "**Ready:** `kubectl apply` → Sandbox Ready, including the Blob PVC mount.<br>**First:** first request → answer at the LoadBalancer.<br>Two timers added.",
+            "**Ready**：`kubectl apply` → Sandbox Ready，含挂载 Blob PVC。<br>**First**：在 LoadBalancer 发首轮请求 → 回答。<br>两段计时相加。"),
+        residual + "<br><br>" + c.t(
+            "**Cold:** client POST → full response.<br>**Pod:** pod created → Ready.<br>**Other:** Cold − Pod (derived; endpoint/session/agent path), not a separately timed Ready → answer interval.",
+            "**Cold**：客户端 POST → 完整响应。<br>**Pod**：pod 创建 → Ready。<br>**Other**：同次 Cold − Pod（推导；含端点、会话和 agent 链路），不是独立计时的 Ready → 回答。"),
+        summed + "<br><br>" + c.t(
+            "**Ready:** E2B sandbox create → Running.<br>**First:** first Prompt Agent turn → answer, including sandbox tool round trips.<br>Two timers added (A protocol).",
+            "**Ready**：E2B 沙箱创建 → Running。<br>**First**：首轮 Prompt Agent 请求 → 回答，含沙箱工具往返。<br>两段计时相加（A 口径）。"),
+    ]
+
+
 def comparison_details(c: Ctx) -> tuple[list[str], list[list[str]], str]:
     m = c.m
     k = m["b.sess.state_kept"]
@@ -102,17 +126,7 @@ def comparison_details(c: Ctx) -> tuple[list[str], list[list[str]], str]:
             c.t("B · Foundry hosted agent", "B · Foundry hosted agent"),
             "C · AKS + agent-sandbox", "D · BYO-AKS", "E · E2B on Azure VM"]
     rows = [
-        [c.t("**Cold start = sum of**", "**冷启动 = 哪几段相加**"),
-         c.t("sandbox create → Running + first answer (timed inside the sandbox)",
-             "沙箱创建 → Running + 第一个回答（沙箱内计时）"),
-         c.t("create session → `active` + first answer (two client requests)",
-             "创建会话 → `active` + 第一个回答（客户端发两次请求）"),
-         c.t("`kubectl apply` → Sandbox Ready (includes the Blob PVC mount) + first answer (at the LoadBalancer)",
-             "`kubectl apply` → Sandbox Ready（含挂 Blob PVC）+ 第一个回答（LoadBalancer 处计时）"),
-         c.t("session pod created → Ready + pod Ready → first answer (endpoint, session and agent path)",
-             "会话 pod 创建 → Ready + pod Ready 后到第一个回答（端点、会话和 agent 链路）"),
-         c.t("E2B sandbox create → Running + first answer (Prompt Agent turn that calls the sandbox tool)",
-             "E2B 沙箱创建 → Running + 第一个回答（调用沙箱工具的 Prompt Agent 轮次）")],
+        cold_start_formulas(c),
         [c.t("**Pure cold start, no external volume (total)**", "**纯冷启动总计（不挂外部卷）**"),
          c.t(f"**{num(m['a.cold_no_volume']['value'])} s** derived ({num(m['a.attr.image']['median'])} s + "
              f"{num(m['a.first_answer']['median'])} s, medians of separate runs)",
@@ -156,8 +170,10 @@ def comparison_details(c: Ctx) -> tuple[list[str], list[list[str]], str]:
              f"已就绪会话上 {c.med('b.sess.first')}；其中服务端记录的生成时间 {rng(m['b.sess.first_server'])} s"),
          c.t(f"{num(m['c.first']['value'])} s (n=1), at the LoadBalancer",
              f"{num(m['c.first']['value'])} s（n=1），在 LoadBalancer 处计时"),
-         c.t(f"{c.med('d.first_after_ready')} after pod Ready (agent turn {rng(m['d.agent_turn'])} s)",
-             f"pod Ready 后 {c.med('d.first_after_ready')}（agent 轮次 {rng(m['d.agent_turn'])} s）"),
+         c.t(f"{c.med('d.first_after_ready')} derived remainder: paired cold total minus pod create → Ready; "
+             f"not a separately timed Ready → answer interval (agent turn {rng(m['d.agent_turn'])} s)",
+             f"推导余量 {c.med('d.first_after_ready')}：同次冷启动总耗时减 pod 创建 → Ready；"
+             f"不是独立计时的 Ready → 回答（agent 轮次 {rng(m['d.agent_turn'])} s）"),
          c.t(f"{c.med('e.first_answer')} (A protocol); {c.med('e.d_agent_turn')} (D protocol)",
              f"{c.med('e.first_answer')}（A 口径）；{c.med('e.d_agent_turn')}（D 口径）")],
         [c.t("**Cold start with a private Blob volume (total)**", "**带私有 Blob 卷的冷启动总计**"),
