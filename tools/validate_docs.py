@@ -126,10 +126,9 @@ def check_information_alignment(pages: dict[str, str]) -> list[str]:
     header = f"| Question | {en_names} |"
     if header not in pages["README.md"]:
         errors.append("README.md: Purpose table names differ from evidence/claims.json")
-    for name, label in (("README.md", "Metric (s)"), ("README_CN.md", "指标（秒）")):
+    for name, label in (("README.md", "Observed or documented"), ("README_CN.md", "实测或文档项")):
         block = next((m.group(3) for m in rd.BLOCK_RE.finditer(pages[name]) if m.group(2) == "comparison"), "")
-        if f"| {label} | A | B | C | D | E |" not in block or any(
-                f"- **{letter}**: {claims['letter_mapping'][letter]['name']}" not in block for letter in letters):
+        if f"| {label} | {en_names} |" not in rd.unwrap_table_layout(block):
             errors.append(f"{name}: Results comparison names differ from evidence/claims.json")
     status_en = " | ".join(claims["paths"][letter]["status_en"] for letter in letters)
     status_zh = " | ".join(claims["paths"][letter]["status_zh"] for letter in letters)
@@ -149,11 +148,11 @@ def check_information_alignment(pages: dict[str, str]) -> list[str]:
             errors.append(f"README.md: {field} row differs from evidence/claims.json")
         if f"| {label_zh} | {values_zh} |" not in pages["README_CN.md"]:
             errors.append(f"README_CN.md: {field} row differs from evidence/claims.json")
-    for name, lang, label in (("README.md", "en", "Idle policy (official docs)"),
-                              ("README_CN.md", "zh", "空闲策略（官方说明）")):
-        policies = "\n".join(f"- **{letter}**: {claims['paths'][letter][f'idle_policy_{lang}']}" for letter in letters)
-        if f"#### {label}\n\n{policies}" not in pages[name]:
-            errors.append(f"{name}: official idle-policy details differ from evidence/claims.json")
+    for name, lang, label in (("README.md", "en", "**Idle policy (official docs)**"),
+                              ("README_CN.md", "zh", "**空闲策略（官方说明）**")):
+        policies = " | ".join(claims["paths"][letter][f"idle_policy_{lang}"] for letter in letters)
+        if f"| {label} | {policies} |" not in rd.unwrap_table_layout(pages[name]):
+            errors.append(f"{name}: official idle-policy row differs from evidence/claims.json")
     boundary_en = " | ".join(claims["paths"][letter]["boundary_en"] for letter in letters)
     boundary_zh = " | ".join(claims["paths"][letter]["boundary_zh"] for letter in letters)
     owner_en = " | ".join(claims["paths"][letter]["node_owner_en"] for letter in letters)
@@ -381,7 +380,7 @@ NUM_RE = re.compile(r"(?<![\w.])\d+(?:\.\d+)?(?![\w])")
 
 
 def numbers(text: str) -> Counter:
-    body = re.sub(r"<!--.*?-->", "", text, flags=re.S)
+    body = re.sub(r"<!--.*?-->", "", rd.unwrap_table_layout(text), flags=re.S)
     body = re.sub(r"\(https?://[^)]*\)|https?://\S+", "", body)
     body = re.sub(r"\]\([^)]*\)", "]", body)
     body = re.sub(r"<img[^>]*>", "", body)

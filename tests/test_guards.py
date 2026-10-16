@@ -4,6 +4,7 @@ import re
 
 import pytest
 
+import render_docs as rd
 import validate_docs as vd
 
 PAGES = ("README.md", "README_CN.md", "VALIDATION.md", "VALIDATION_CN.md")
@@ -83,8 +84,9 @@ def test_scheduled_expiry_cannot_be_renamed_request_idle_timeout(name, lang):
     p = pages()
     claims = json.loads(vd.read("evidence/claims.json"))
     value = claims["paths"]["C"][f"idle_policy_{lang}"]
-    assert value in p[name]
-    p[name] = p[name].replace(value, value.replace("shutdownTime", "idleTimeout"), 1)
+    wrapped = rd.wrap_table_cell(value)
+    assert wrapped in p[name]
+    p[name] = p[name].replace(wrapped, rd.wrap_table_cell(value.replace("shutdownTime", "idleTimeout")), 1)
     assert any("official idle-policy" in error for error in vd.check_information_alignment(p))
 
 
@@ -92,7 +94,7 @@ def test_scheduled_expiry_cannot_be_renamed_request_idle_timeout(name, lang):
 def test_byoaks_unverified_idle_policy_cannot_become_a_timeout(name, lang):
     p = pages()
     claims = json.loads(vd.read("evidence/claims.json"))
-    value = claims["paths"]["D"][f"idle_policy_{lang}"]
+    value = rd.wrap_table_cell(claims["paths"]["D"][f"idle_policy_{lang}"])
     assert value in p[name]
     p[name] = p[name].replace(value, "87 min idle reclamation timeout", 1)
     assert any("official idle-policy" in error for error in vd.check_information_alignment(p))

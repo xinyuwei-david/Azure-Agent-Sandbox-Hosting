@@ -59,28 +59,33 @@ def test_readme_headline_numbers_come_from_evidence():
 
 
 @pytest.mark.parametrize("lang", ("en", "zh"))
-def test_comparison_has_compact_overview_and_keeps_all_details(lang):
+def test_comparison_keeps_the_full_table_and_only_changes_wrapping(lang):
     metrics, runs = rd.load_inputs()
     c = rd.Ctx(metrics, runs, lang)
     block = rd.b_comparison(c)
     header, details, observation = rd.comparison_details(c)
+    original = rd.table(header, details) + "\n" + observation + "\n"
+    assert rd.unwrap_table_layout(block) == original
     lines = [line for line in block.splitlines() if line.startswith("|")]
-    assert lines[0].split("|")[2:-1] == [f" {letter} " for letter in "ABCDE"]
-    assert len(lines) == 9
-    for line in lines[2:]:
-        cells = [cell.strip() for cell in line.split("|")[1:-1]]
-        assert len(cells) == 6 and len(cells[0]) <= 24
-        assert all(re.fullmatch(r"(?:\d+(?:\.\d+)?(?:–\d+(?:\.\d+)?)?[†‡]?|—)", cell) for cell in cells[1:])
-    assert "<details" not in block and "<summary" not in block
-    for name in header[1:]:
-        assert f"- **{name[0]}**: {name[4:]}" in block
-    for row in details:
-        title = row[0].strip("*").removeprefix("└ ")
-        section = f"#### {title}\n\n" + "\n".join(
-            f"- **{letter}**: {value}" for letter, value in zip("ABCDE", row[1:]))
-        assert section in block
-    assert observation in block
-    assert "†" in block and "‡" in block
+    assert len(lines) == len(details) + 2 == 15
+    assert all(len(line.split("|")[1:-1]) == 6 for line in lines)
+    assert "<details" not in block and "<summary" not in block and "#### " not in block
+    assert "&shy;" in block and "<br>" in block
+    assert vd.numbers(block) == vd.numbers(original)
+
+
+@pytest.mark.parametrize("cell", [
+    "`POST .../endpoint/sessions`", "`500 session_creation_failed`", "`b-2026-10-15-sessions`",
+    "[documented](https://example.com/path_with_underscores?key=value)",
+    "**6.19 s** (2.31 s + 3.88 s, medians of separate runs)",
+    "0.051–0.089 s (n=20); Standard_D4ds_v7; `<input & output>`",
+])
+def test_table_wrap_round_trip_preserves_identifiers_numbers_and_urls(cell):
+    wrapped = rd.wrap_table_cell(cell)
+    assert rd.unwrap_table_layout(wrapped) == cell
+    assert vd.numbers(wrapped) == vd.numbers(cell)
+    if "https://" in cell:
+        assert "](https://example.com/path_with_underscores?key=value)" in wrapped
 
 
 def test_every_generated_block_is_known():
