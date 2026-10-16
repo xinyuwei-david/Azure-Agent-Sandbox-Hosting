@@ -77,21 +77,132 @@ A's and E's A-protocol cold and resume-to-answer numbers are component sums, not
 **Do not rank the five products by these seconds.** Clock locations, prompts, reasoning settings, output token counts, image cache and sample sizes were not uniformly controlled or fully recorded across paths. The same model name does not make these a matched latency benchmark. Numerical sanity checks can reject invalid timings; they cannot establish product performance or fill missing instrumentation.
 
 <!-- BEGIN GENERATED: comparison -->
-| Observed or documented | A · ACA Sandboxes | B · Foundry hosted agent | C · AKS + agent-sandbox | D · BYO-AKS | E · E2B on Azure VM |
+**At a glance — seconds, not a product ranking.** Values are medians unless shown as a range, † a derived value, or ‡ a single observation. — means no comparable measurement; see the details below.
+
+| Metric (s) | A | B | C | D | E |
 |---|---|---|---|---|---|
-| **Cold start = sum of** | sandbox create → Running + first answer (timed inside the sandbox) | create session → `active` + first answer (two client requests) | `kubectl apply` → Sandbox Ready (includes the Blob PVC mount) + first answer (at the LoadBalancer) | session pod created → Ready + pod Ready → first answer (endpoint, session and agent path) | E2B sandbox create → Running + first answer (Prompt Agent turn that calls the sandbox tool) |
-| **Pure cold start, no external volume (total)** | **6.19 s** derived (2.31 s + 3.88 s, medians of separate runs) | **12.31 s** median (11.65–12.36; n=3), added per run; one request that auto-creates the session on the first `/responses`: 9.43 s (gateway model route) / 5.29 s (direct), n=1 each | not measured: C keeps state across suspend only through the Blob PVC, so every measured cold start mounted it | **25.49 s** median (23.53–26.7; n=5), one request via the Foundry endpoint | **4.26 s** median (2.89–8.44; n=3), added per run (A protocol); 3.6 s median (2.54–7.94; n=5) in one request (D protocol) |
-| └ part 1: sandbox, session or pod ready | 2.31 s median (1.6–2.7; n=3) (image only); with VNet 1.97–2.52 s (n=2), port 2.3–2.33 s (n=2) | 6.69 s median (6.51–6.87; n=3), `POST .../endpoint/sessions` → `active` | not measured without the PVC | 8–10 s (n=6) with the image cached; 25 s on a fresh node (n=2) | 0.07 s median (0.06–0.14; n=3) in the agent runs; 0.051–0.089 s (n=20) in the on-host microbenchmark |
-| └ part 2: ready → first answer | 3.88 s median (2.82–5.55; n=3), timed inside the sandbox | 5.62 s median (4.79–5.85; n=3) on the active session; the service recorded 2–4 s of it as generation | 12.75 s (n=1), at the LoadBalancer | 15.49 s median (14.01–16.16; n=3) after pod Ready (agent turn 2–5 s) | 4.12 s median (2.82–8.38; n=3) (A protocol); 3.44 s median (2.28–7.75; n=5) (D protocol) |
-| **Cold start with a private Blob volume (total)** | **28.0 s** median (27.07–50.41; n=3); SDK create + answer inside sandbox | no external volume (the platform restores `$HOME` and `/files`) | **57.65 s** (n=1; apply → Ready 44.9 s + answer 12.75 s) | no external volume in the session pod | no external volume (templates and snapshots stay on the host VM's OS disk) |
-| └ volume overhead | +21.94 s median vs image only (create → Running 24.25 s median (24.12–44.86; n=3)); Memory snapshots need no volume | none | not separable: no run without the PVC (apply → Ready 44.9 s includes it, n=1) | none | none |
-| **Follow-up turn, same session** | 1.05 s median (1.04–1.54; n=3) | 4.03, 5.54 s (n=2) (`b-2026-09-27`, gateway model route); 4.59 s median (4.42–4.81; n=3) (`b-2026-10-15-sessions`, direct model route) | 1.96 s (n=1) | 12.9 s median (11.17–16.42; n=3) | 2.95 s median (2.83–3.92; n=3) (A protocol); 3.39 s median (3.19–5.03; n=3) (D protocol); on-host sandbox command 0.007–0.01 s (n=20) |
-| **Suspend / pause and wake until ready** | stop 7.56 s median (5.97–9.31; n=3); resume → Running 1.58–2.79 s (n=7, no volume), 2.83 s median (1.61–3.02; n=3) (with Blob volume) | `:stop` → idle 3.05 s median (2.9–7.71; n=3); compute released, `$HOME` kept, no memory snapshot; wakes on the next request (next row) | suspend → pod gone 9.7 s (n=1); resume → Ready 17.1 s, LoadBalancer healthy 26.1 s (n=1) | Not exercised; confirm preview suspend support with the product group | pause 0.13 s median (0.11–0.15; n=3) (on host 0.051–1.81 s (n=20)); resume → Running 0.09 s median (0.08–0.11; n=3) (on host 0.086–0.62 s (n=20)) |
-| **Resume request → first answer (stop excluded)** | 14.45 s median (12.44–17.22; n=3); separately reported resume-only median 2.83 s | 12.02 s median (11.66–12.35; n=3): the next turn on the stopped session gets new compute with `$HOME` restored; file written before the stop read back 3/3, question count kept growing 3/3 | 34.2 s (n=1; Ready 17.1 s, LoadBalancer healthy 26.1 s) | Not exercised; confirm preview suspend support with the product group | 6.48 s median (4.73–12.82; n=3); separately reported resume-only median 0.09 s |
-| **Pod or sandbox lost → ready again** | not exercisable: no API injects host loss, and deleting a sandbox ends it | not exercisable: no API kills only a session's sandbox; explicit stop and resume are above | 23.4 s (n=1); same Sandbox state restored | 23.9 s (n=1); deleted session continuity not tested | 0.1 s (n=1); another live session answered in 2.61 s |
-| **Idle policy (official docs)** | [Docs](https://learn.microsoft.com/azure/container-apps/sandboxes-overview#lifecycle-states): configurable idle auto-suspend; Memory or Disk snapshot mode | [Docs](https://learn.microsoft.com/azure/foundry/agents/concepts/hosted-agents#sessions): 2–60 min idle timeout (default 15); compute released, $HOME and /files persisted; session deleted after 30 days of inactivity | [Official API](https://github.com/kubernetes-sigs/agent-sandbox/blob/v0.5.2/docs/api.md): shutdownTime is scheduled expiry, not request-idle detection; implement request-idle recycling yourself | No verified public official idle policy; confirm with the product group | [E2B docs](https://e2b.dev/docs/sandbox): per-sandbox timeout (default 5 min) and explicit `beta_pause` / `connect` |
-| **Capacity** | serverless; default 500 concurrent active cores (2000 standard limit, 20000 in our subscription) and 3000 requests/min ([docs](https://sandboxes.azure.com/docs/sandboxes/limits)); stopped sandboxes do not count | one VM-isolated sandbox per session, scaled per session with no replica count or warm pool to configure ([docs](https://learn.microsoft.com/azure/foundry/agents/concepts/hosted-agents#scaling-and-right-sizing)); up to 20 GiB disk per session (20% system-reserved) and 50 MB per uploaded file | your Kata node pool | observed at most 5 per Standard_D4s_v5 node; 12 on 3 nodes; `500 session_creation_failed`, `429 aks_quota_exceeded` | one machine per install, by design ([E2B](https://github.com/e2b-dev/runtime/blob/588e5b9500b0987bc5a700d91483b03f0ae7d2a2/embed/README.md#when-one-node-is-not-enough)); 2026-10-14 on 1 Standard_D4ds_v7 VM: 4 at once 4/4, 8 at once 8/8; 2026-10-15 on one host 7/8 and on two independent hosts 14/16; the default hugepage pool held 7 `base` sandboxes per host |
-| **Path setup in our run** | 146.6 s (sandbox group, VNet connection, disk image, volume, sandbox) | 161 s (`azd deploy`; model route: gateway (APIM)) | 812.9 s (prepare script, private link, apply) | 854 s (roles, `azd provision`, `azd deploy`; author's console, not kept) | 177 s (Docker Engine 33.0 s + E2B Compose and base template 144 s) |
+| Cold, no volume | 6.19† | 12.31 | — | 25.49 | 4.26 |
+| Ready, no volume | 2.31 | 6.69 | — | 8–10 | 0.07 |
+| Ready → first answer | 3.88 | 5.62 | 12.75‡ | 15.49 | 4.12 |
+| Cold, with Blob | 28.0 | — | 57.65‡ | — | — |
+| Follow-up answer | 1.05 | 4.59 | 1.96‡ | 12.9 | 2.95 |
+| Resume → answer | 14.45 | 12.02 | 34.2‡ | — | 6.48 |
+| Loss → ready | — | — | 23.4‡ | 23.9‡ | 0.1‡ |
+
+
+- **A**: ACA Sandboxes
+- **B**: Foundry hosted agent
+- **C**: AKS + agent-sandbox
+- **D**: BYO-AKS
+- **E**: E2B on Azure VM
+
+**Scope:** B uses the 2026-10-15 explicit-session run; E uses the 2026-10-14 A protocol. A uses the Blob-volume run except in the no-volume rows; C's measured runs include its Blob PVC. D's ready range is for cached images and is not the sample used for its first-answer median. Do not add medians from separate samples. Loss → ready does not prove continuity of D's or E's deleted session.
+
+**Full results and definitions (all expanded)**
+
+#### Cold start = sum of
+
+- **A**: sandbox create → Running + first answer (timed inside the sandbox)
+- **B**: create session → `active` + first answer (two client requests)
+- **C**: `kubectl apply` → Sandbox Ready (includes the Blob PVC mount) + first answer (at the LoadBalancer)
+- **D**: session pod created → Ready + pod Ready → first answer (endpoint, session and agent path)
+- **E**: E2B sandbox create → Running + first answer (Prompt Agent turn that calls the sandbox tool)
+
+#### Pure cold start, no external volume (total)
+
+- **A**: **6.19 s** derived (2.31 s + 3.88 s, medians of separate runs)
+- **B**: **12.31 s** median (11.65–12.36; n=3), added per run; one request that auto-creates the session on the first `/responses`: 9.43 s (gateway model route) / 5.29 s (direct), n=1 each
+- **C**: not measured: C keeps state across suspend only through the Blob PVC, so every measured cold start mounted it
+- **D**: **25.49 s** median (23.53–26.7; n=5), one request via the Foundry endpoint
+- **E**: **4.26 s** median (2.89–8.44; n=3), added per run (A protocol); 3.6 s median (2.54–7.94; n=5) in one request (D protocol)
+
+#### part 1: sandbox, session or pod ready
+
+- **A**: 2.31 s median (1.6–2.7; n=3) (image only); with VNet 1.97–2.52 s (n=2), port 2.3–2.33 s (n=2)
+- **B**: 6.69 s median (6.51–6.87; n=3), `POST .../endpoint/sessions` → `active`
+- **C**: not measured without the PVC
+- **D**: 8–10 s (n=6) with the image cached; 25 s on a fresh node (n=2)
+- **E**: 0.07 s median (0.06–0.14; n=3) in the agent runs; 0.051–0.089 s (n=20) in the on-host microbenchmark
+
+#### part 2: ready → first answer
+
+- **A**: 3.88 s median (2.82–5.55; n=3), timed inside the sandbox
+- **B**: 5.62 s median (4.79–5.85; n=3) on the active session; the service recorded 2–4 s of it as generation
+- **C**: 12.75 s (n=1), at the LoadBalancer
+- **D**: 15.49 s median (14.01–16.16; n=3) after pod Ready (agent turn 2–5 s)
+- **E**: 4.12 s median (2.82–8.38; n=3) (A protocol); 3.44 s median (2.28–7.75; n=5) (D protocol)
+
+#### Cold start with a private Blob volume (total)
+
+- **A**: **28.0 s** median (27.07–50.41; n=3); SDK create + answer inside sandbox
+- **B**: no external volume (the platform restores `$HOME` and `/files`)
+- **C**: **57.65 s** (n=1; apply → Ready 44.9 s + answer 12.75 s)
+- **D**: no external volume in the session pod
+- **E**: no external volume (templates and snapshots stay on the host VM's OS disk)
+
+#### volume overhead
+
+- **A**: +21.94 s median vs image only (create → Running 24.25 s median (24.12–44.86; n=3)); Memory snapshots need no volume
+- **B**: none
+- **C**: not separable: no run without the PVC (apply → Ready 44.9 s includes it, n=1)
+- **D**: none
+- **E**: none
+
+#### Follow-up turn, same session
+
+- **A**: 1.05 s median (1.04–1.54; n=3)
+- **B**: 4.03, 5.54 s (n=2) (`b-2026-09-27`, gateway model route); 4.59 s median (4.42–4.81; n=3) (`b-2026-10-15-sessions`, direct model route)
+- **C**: 1.96 s (n=1)
+- **D**: 12.9 s median (11.17–16.42; n=3)
+- **E**: 2.95 s median (2.83–3.92; n=3) (A protocol); 3.39 s median (3.19–5.03; n=3) (D protocol); on-host sandbox command 0.007–0.01 s (n=20)
+
+#### Suspend / pause and wake until ready
+
+- **A**: stop 7.56 s median (5.97–9.31; n=3); resume → Running 1.58–2.79 s (n=7, no volume), 2.83 s median (1.61–3.02; n=3) (with Blob volume)
+- **B**: `:stop` → idle 3.05 s median (2.9–7.71; n=3); compute released, `$HOME` kept, no memory snapshot; wakes on the next request (resume-to-answer details below)
+- **C**: suspend → pod gone 9.7 s (n=1); resume → Ready 17.1 s, LoadBalancer healthy 26.1 s (n=1)
+- **D**: Not exercised; confirm preview suspend support with the product group
+- **E**: pause 0.13 s median (0.11–0.15; n=3) (on host 0.051–1.81 s (n=20)); resume → Running 0.09 s median (0.08–0.11; n=3) (on host 0.086–0.62 s (n=20))
+
+#### Resume request → first answer (stop excluded)
+
+- **A**: 14.45 s median (12.44–17.22; n=3); separately reported resume-only median 2.83 s
+- **B**: 12.02 s median (11.66–12.35; n=3): the next turn on the stopped session gets new compute with `$HOME` restored; file written before the stop read back 3/3, question count kept growing 3/3
+- **C**: 34.2 s (n=1; Ready 17.1 s, LoadBalancer healthy 26.1 s)
+- **D**: Not exercised; confirm preview suspend support with the product group
+- **E**: 6.48 s median (4.73–12.82; n=3); separately reported resume-only median 0.09 s
+
+#### Pod or sandbox lost → ready again
+
+- **A**: not exercisable: no API injects host loss, and deleting a sandbox ends it
+- **B**: not exercisable: no API kills only a session's sandbox; explicit stop and resume are above
+- **C**: 23.4 s (n=1); same Sandbox state restored
+- **D**: 23.9 s (n=1); deleted session continuity not tested
+- **E**: 0.1 s (n=1); another live session answered in 2.61 s
+
+#### Idle policy (official docs)
+
+- **A**: [Docs](https://learn.microsoft.com/azure/container-apps/sandboxes-overview#lifecycle-states): configurable idle auto-suspend; Memory or Disk snapshot mode
+- **B**: [Docs](https://learn.microsoft.com/azure/foundry/agents/concepts/hosted-agents#sessions): 2–60 min idle timeout (default 15); compute released, $HOME and /files persisted; session deleted after 30 days of inactivity
+- **C**: [Official API](https://github.com/kubernetes-sigs/agent-sandbox/blob/v0.5.2/docs/api.md): shutdownTime is scheduled expiry, not request-idle detection; implement request-idle recycling yourself
+- **D**: No verified public official idle policy; confirm with the product group
+- **E**: [E2B docs](https://e2b.dev/docs/sandbox): per-sandbox timeout (default 5 min) and explicit `beta_pause` / `connect`
+
+#### Capacity
+
+- **A**: serverless; default 500 concurrent active cores (2000 standard limit, 20000 in our subscription) and 3000 requests/min ([docs](https://sandboxes.azure.com/docs/sandboxes/limits)); stopped sandboxes do not count
+- **B**: one VM-isolated sandbox per session, scaled per session with no replica count or warm pool to configure ([docs](https://learn.microsoft.com/azure/foundry/agents/concepts/hosted-agents#scaling-and-right-sizing)); up to 20 GiB disk per session (20% system-reserved) and 50 MB per uploaded file
+- **C**: your Kata node pool
+- **D**: observed at most 5 per Standard_D4s_v5 node; 12 on 3 nodes; `500 session_creation_failed`, `429 aks_quota_exceeded`
+- **E**: one machine per install, by design ([E2B](https://github.com/e2b-dev/runtime/blob/588e5b9500b0987bc5a700d91483b03f0ae7d2a2/embed/README.md#when-one-node-is-not-enough)); 2026-10-14 on 1 Standard_D4ds_v7 VM: 4 at once 4/4, 8 at once 8/8; 2026-10-15 on one host 7/8 and on two independent hosts 14/16; the default hugepage pool held 7 `base` sandboxes per host
+
+#### Path setup in our run
+
+- **A**: 146.6 s (sandbox group, VNet connection, disk image, volume, sandbox)
+- **B**: 161 s (`azd deploy`; model route: gateway (APIM))
+- **C**: 812.9 s (prepare script, private link, apply)
+- **D**: 854 s (roles, `azd provision`, `azd deploy`; author's console, not kept)
+- **E**: 177 s (Docker Engine 33.0 s + E2B Compose and base template 144 s)
 
 **Local configuration and observation, not official idle policy:** A used Memory mode with a 900 s auto-suspend setting. D's oldest pod was still Running at least 87 min after creation; this is pod age, not idle duration or a reclamation timeout.
 <!-- END GENERATED: comparison -->

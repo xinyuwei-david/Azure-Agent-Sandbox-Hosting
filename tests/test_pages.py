@@ -58,6 +58,31 @@ def test_readme_headline_numbers_come_from_evidence():
             assert key.rpartition(".")[0] in metrics, key
 
 
+@pytest.mark.parametrize("lang", ("en", "zh"))
+def test_comparison_has_compact_overview_and_keeps_all_details(lang):
+    metrics, runs = rd.load_inputs()
+    c = rd.Ctx(metrics, runs, lang)
+    block = rd.b_comparison(c)
+    header, details, observation = rd.comparison_details(c)
+    lines = [line for line in block.splitlines() if line.startswith("|")]
+    assert lines[0].split("|")[2:-1] == [f" {letter} " for letter in "ABCDE"]
+    assert len(lines) == 9
+    for line in lines[2:]:
+        cells = [cell.strip() for cell in line.split("|")[1:-1]]
+        assert len(cells) == 6 and len(cells[0]) <= 24
+        assert all(re.fullmatch(r"(?:\d+(?:\.\d+)?(?:–\d+(?:\.\d+)?)?[†‡]?|—)", cell) for cell in cells[1:])
+    assert "<details" not in block and "<summary" not in block
+    for name in header[1:]:
+        assert f"- **{name[0]}**: {name[4:]}" in block
+    for row in details:
+        title = row[0].strip("*").removeprefix("└ ")
+        section = f"#### {title}\n\n" + "\n".join(
+            f"- **{letter}**: {value}" for letter, value in zip("ABCDE", row[1:]))
+        assert section in block
+    assert observation in block
+    assert "†" in block and "‡" in block
+
+
 def test_every_generated_block_is_known():
     for name in PAGES:
         for block in re.findall(r"<!-- BEGIN GENERATED: ([a-z0-9-]+) -->", committed()[name]):

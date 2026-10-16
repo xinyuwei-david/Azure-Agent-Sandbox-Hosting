@@ -93,7 +93,7 @@ def quote(lines: list[str]) -> str:
 
 # --- README blocks --------------------------------------------------------------------------------
 
-def b_comparison(c: Ctx) -> str:
+def comparison_details(c: Ctx) -> tuple[list[str], list[list[str]], str]:
     m = c.m
     k = m["b.sess.state_kept"]
     claims = json.loads((ROOT / "evidence" / "claims.json").read_text(encoding="utf-8"))
@@ -199,8 +199,8 @@ def b_comparison(c: Ctx) -> str:
              f"停止 {c.med('a.stop')}；恢复 → Running 不挂卷 {rng(m['a.attr.resume_small'])} s"
              f"（n={m['a.attr.resume_small']['n']}），带 Blob 卷 {c.med('a.resume')}"),
          c.t(f"`:stop` → idle {c.med('b.sess.stop')}; compute released, `$HOME` kept, no memory snapshot; "
-             "wakes on the next request (next row)",
-             f"`:stop` → idle {c.med('b.sess.stop')}；释放算力、保留 `$HOME`，无内存快照；下一次请求时唤醒（见下一行）"),
+             "wakes on the next request (resume-to-answer details below)",
+             f"`:stop` → idle {c.med('b.sess.stop')}；释放算力、保留 `$HOME`，无内存快照；下一次请求时唤醒（见下方恢复到首答明细）"),
          c.t(f"suspend → pod gone {num(m['c.suspend']['value'])} s (n=1); resume → Ready "
              f"{num(m['c.resume_ready']['value'])} s, LoadBalancer healthy {num(m['c.resume_lb']['value'])} s (n=1)",
              f"挂起 → pod 消失 {num(m['c.suspend']['value'])} s（n=1）；恢复 → Ready "
@@ -287,7 +287,57 @@ def b_comparison(c: Ctx) -> str:
         f"**本地配置与观察，不是官网空闲策略：** A 本次使用 {spec['auto_suspend_mode']} 模式，"
         f"自动挂起设置为 {spec['auto_suspend_seconds']} s。D 最早的 pod 在创建至少 "
         f"{m['d.idle']['value']} min 后仍为 Running；这是 pod 的年龄，不是空闲时长或回收超时。")
-    return table(head, rows) + "\n" + observation + "\n"
+    return head, rows, observation
+
+
+def b_comparison(c: Ctx) -> str:
+    m = c.m
+    head, details, observation = comparison_details(c)
+
+    def median(key: str) -> str:
+        return num(m[key]["median"])
+
+    def single(key: str) -> str:
+        return num(m[key]["value"]) + "‡"
+
+    rows = [
+        [c.t("Cold, no volume", "无外挂卷冷启动"), num(m["a.cold_no_volume"]["value"]) + "†",
+         median("b.sess.cold"), "—", median("d.cold"), median("e.cold")],
+        [c.t("Ready, no volume", "无外挂卷就绪"), median("a.attr.image"), median("b.sess.create"), "—",
+         rng(m["d.pod_ready"]), median("e.create")],
+        [c.t("Ready → first answer", "就绪 → 首答"), median("a.first_answer"), median("b.sess.first"),
+         single("c.first"), median("d.first_after_ready"), median("e.first_answer")],
+        [c.t("Cold, with Blob", "挂 Blob 卷冷启动"), median("a.cold"), "—", single("c.cold"), "—", "—"],
+        [c.t("Follow-up answer", "同会话追问"), median("a.warm"), median("b.sess.warm"), single("c.warm"),
+         median("d.warm"), median("e.warm")],
+        [c.t("Resume → answer", "恢复 → 首答"), median("a.recover"), median("b.sess.resume"),
+         single("c.resume_answer"), "—", median("e.recover")],
+        [c.t("Loss → ready", "丢失 → 重新就绪"), "—", "—", single("c.pod_lost"), single("d.pod_lost"),
+         single("e.pod_lost")],
+    ]
+    intro = c.t(
+        "**At a glance — seconds, not a product ranking.** Values are medians unless shown as a range, "
+        "† a derived value, or ‡ a single observation. — means no comparable measurement; see the details below.",
+        "**一览表——单位：秒，不用于产品排名。** 默认列中位数；区间按原样展示；† 为合成值，‡ 为单次观察。"
+        "— 表示没有对应的可比实测，原因见下方明细。")
+    scope = c.t(
+        "**Scope:** B uses the 2026-10-15 explicit-session run; E uses the 2026-10-14 A protocol. "
+        "A uses the Blob-volume run except in the no-volume rows; C's measured runs include its Blob PVC. "
+        "D's ready range is for cached images and is not the sample used for its first-answer median. "
+        "Do not add medians from separate samples. Loss → ready does not prove continuity of D's or E's deleted session.",
+        "**口径：** B 使用 2026-10-15 显式会话实测，E 使用 2026-10-14 的 A 口径。"
+        "A 除无外挂卷两行外使用挂 Blob 卷的实测；C 的实测均挂 Blob PVC。"
+        "D 的就绪区间来自镜像已缓存的样本，与首答中位数不是同一组样本，不能将不同样本的中位数直接相加。"
+        "丢失后重新就绪不代表 D 或 E 被删会话的连续性。")
+    legend = "\n".join(f"- **{name[0]}**: {name[4:]}" for name in head[1:])
+    sections = [intro, table([c.t("Metric (s)", "指标（秒）"), "A", "B", "C", "D", "E"], rows), legend, scope,
+                c.t("**Full results and definitions (all expanded)**", "**完整结果与定义（全部展开）**")]
+    for row in details:
+        title = row[0].strip("*").removeprefix("└ ")
+        sections.append("#### " + title + "\n\n" + "\n".join(
+            f"- **{letter}**: {value}" for letter, value in zip("ABCDE", row[1:])))
+    sections.append(observation)
+    return "\n\n".join(sections) + "\n"
 
 
 CI_TEMPLATE_URL = "https://github.com/e2b-dev/code-interpreter/tree/162a2a25b6a5ea5806749a437b96cbdc5bfc087e/template"
