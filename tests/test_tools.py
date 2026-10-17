@@ -15,7 +15,7 @@ import measure_responses
 
 ROOT = Path(__file__).resolve().parents[1]
 FIX = ROOT / "tests" / "fixtures"
-TOOLS = ["aca_sandbox.py", "measure_aca.py", "measure_responses.py", "measure_e2b.py", "measure_sessions.py",
+TOOLS = ["aca_sandbox.py", "measure_aca.py", "measure_responses.py", "measure_e2b.py", "e2b_agent.py", "measure_sessions.py",
          "measure_code_interpreter.py", "check_isolation.py", "build_measurements.py", "render_docs.py", "build_diagrams.py", "export_evidence.py",
          "validate_docs.py"]
 
@@ -282,6 +282,7 @@ def test_aca_empty_measurement_is_rejected():
 
 # --- measure_e2b: offline fakes for the E2B SDK and the Foundry Responses API -------------------------------
 
+import io  # noqa: E402
 import itertools  # noqa: E402
 import re  # noqa: E402
 
@@ -302,6 +303,20 @@ class FakeSandbox:
         self.home = host.root / f"{sandbox_id}-{next(host.ids)}"
         self.home.mkdir(parents=True)
         self.commands = SimpleNamespace(run=self._run)
+        self.kernel = {}
+
+    def run_code(self, code, timeout=None):
+        """Code Interpreter: one namespace per sandbox, kept between cells like the Jupyter kernel."""
+        if self.host.down:
+            raise RuntimeError(f"host {self.host.name} unreachable")
+        out, error = io.StringIO(), None
+        # A per-call print: redirect_stdout is process-wide, and the scale test runs sessions in threads.
+        self.kernel["print"] = lambda *args, **kw: print(*args, **{**kw, "file": out})
+        try:
+            exec(code.replace("/home/user", self.home.as_posix()), self.kernel)
+        except Exception as exc:  # noqa: BLE001 - returned like the SDK's ExecutionError
+            error = SimpleNamespace(name=type(exc).__name__, value=str(exc))
+        return SimpleNamespace(logs=SimpleNamespace(stdout=[out.getvalue()]), text=None, error=error)
 
     def _run(self, cmd, timeout=60):
         if self.host.down:
@@ -451,9 +466,11 @@ def test_e2b_prompts_match_the_measured_run():
         assert doc["agent"] == {"instructions": measure_e2b.INSTRUCTIONS, "tools": measure_e2b.TOOLS_SPEC}
 
 
+@pytest.mark.parametrize("executor", sorted(measure_e2b.EXECUTORS))
 @pytest.mark.parametrize("lossy", (False, True))
-def test_e2b_agent_run_checks_history_across_pause(monkeypatch, tmp_path, lossy):
+def test_e2b_agent_run_checks_history_across_pause(monkeypatch, tmp_path, lossy, executor):
     monkeypatch.setattr(measure_e2b.time, "sleep", lambda _: None)
+    monkeypatch.setattr(measure_e2b, "EXECUTOR", executor)
     hosts, fakes = e2b_hosts(["a"], monkeypatch, tmp_path)
     fakes["http://a:3000"].lossy_resume = lossy
     rec = measure_e2b.agent_run(FakeFoundry(), "1", hosts["a"], 1)
@@ -463,6 +480,17 @@ def test_e2b_agent_run_checks_history_across_pause(monkeypatch, tmp_path, lossy)
         assert rec["history_lengths"] == [1, 2, 3, 4] and rec["state_kept"] is True and "error" not in rec
         assert [rec[k]["response"] for k in ("warm", "first_after_resume", "warm_after_resume")] == ["1", "2", "3"]
     assert rec["sandbox_deleted"] and rec["conversation_deleted"] and not fakes["http://a:3000"].sandboxes
+
+
+def test_e2b_code_interpreter_cells_share_one_kernel(monkeypatch, tmp_path):
+    hosts, fakes = e2b_hosts(["a"], monkeypatch, tmp_path)
+    sbx = hosts["a"].create()
+    first = measure_e2b.sandbox_run_code(sbx, "x = 41", "q1")
+    second = measure_e2b.sandbox_run_code(sbx, "print(x + 1)", "q2")
+    assert second["stdout"] == "42" and second["state"]["prior_questions"] == 1
+    assert [first["state"]["history_length"], second["state"]["history_length"]] == [1, 2]
+    with pytest.raises(RuntimeError, match="ZeroDivisionError"):
+        measure_e2b.sandbox_run_code(sbx, "1/0", "q3")
 
 
 def test_e2b_scale_spreads_sessions_and_counts_per_host(monkeypatch, tmp_path):
@@ -505,8 +533,9 @@ def test_e2b_main_fails_on_lost_state_or_a_leftover(monkeypatch, tmp_path):
         monkeypatch.setenv(k, v)
     monkeypatch.delenv("FOUNDRY_TOKEN_SOURCE", raising=False)
     monkeypatch.setattr(measure_e2b.time, "sleep", lambda _: None)
+    monkeypatch.setattr(measure_e2b, "EXECUTOR", measure_e2b.EXECUTOR)
     fakes = {"http://a:3000": FakeHost("a", tmp_path / "a")}
-    monkeypatch.setattr(measure_e2b, "load_sdk", lambda: FakeSDK(fakes).triple)
+    monkeypatch.setattr(measure_e2b, "load_sdk", lambda executor: FakeSDK(fakes).triple)
     monkeypatch.setattr(measure_e2b.Host, "health", lambda self: 200)
     monkeypatch.setattr(measure_e2b, "token", lambda: "test-token")
     fd = FakeFoundry()
@@ -515,12 +544,29 @@ def test_e2b_main_fails_on_lost_state_or_a_leftover(monkeypatch, tmp_path):
     assert fd.versions == [] and fd.convs == set()
     doc = json.loads(next((tmp_path / "ok").glob("e2b-agent-*.json")).read_text(encoding="utf-8"))
     assert doc["agent"]["instructions"] == measure_e2b.INSTRUCTIONS and "test-key" not in json.dumps(doc)
+    assert (doc["executor"], doc["template"]) == ("code-interpreter", "code-interpreter-v1")
     fakes["http://a:3000"].lossy_resume = True
     assert measure_e2b.main(["agent", "--runs", "1", "--out-dir", str(tmp_path / "lossy")]) == 1
     fakes["http://a:3000"].lossy_resume = False
     stray = FakeSandbox(fakes["http://a:3000"], "stray")
     fakes["http://a:3000"].sandboxes["stray"] = stray
     assert measure_e2b.main(["agent", "--runs", "1", "--out-dir", str(tmp_path / "left")]) == 1
+
+
+def test_e2b_agent_answers_and_cleans_up(monkeypatch, tmp_path, capsys):
+    import e2b_agent
+    for k, v in {"PROJECT_ENDPOINT": "https://example.com/api/projects/p", "ACA_MODEL": "gpt-5.4-mini",
+                 "E2B_API_URL": "http://a:3000", "E2B_SANDBOX_URL": "http://a:3002", "E2B_API_KEY": "test-key"}.items():
+        monkeypatch.setenv(k, v)
+    monkeypatch.setattr(measure_e2b, "EXECUTOR", measure_e2b.EXECUTOR)
+    fakes = {"http://a:3000": FakeHost("a", tmp_path / "a")}
+    monkeypatch.setattr(measure_e2b, "load_sdk", lambda executor: FakeSDK(fakes).triple)
+    monkeypatch.setattr(measure_e2b, "token", lambda: "test-token")
+    fd = FakeFoundry()
+    monkeypatch.setattr(measure_e2b, "Foundry", lambda endpoint, tok: fd)
+    assert e2b_agent.main(["Where is Bangkok? Answer in one short sentence."]) == 0
+    assert "Bangkok" in capsys.readouterr().out
+    assert fd.versions == [] and fd.convs == set() and not fakes["http://a:3000"].sandboxes
 
 
 def test_e2b_lost_state_or_a_leak_is_not_exit_0():
@@ -586,7 +632,8 @@ def test_e2b_recovery_and_hostloss_clean_up_when_a_call_fails(monkeypatch, tmp_p
 def test_e2b_bad_hosts_file_is_a_setting_error(monkeypatch, tmp_path):
     for k, v in {"PROJECT_ENDPOINT": "https://example.com/api/projects/p", "ACA_MODEL": "gpt-5.4-mini"}.items():
         monkeypatch.setenv(k, v)
-    monkeypatch.setattr(measure_e2b, "load_sdk", lambda: FakeSDK({}).triple)
+    monkeypatch.setattr(measure_e2b, "load_sdk", lambda executor: FakeSDK({}).triple)
+    monkeypatch.setattr(measure_e2b, "EXECUTOR", measure_e2b.EXECUTOR)
     for name, content in (("missing.json", None), ("broken.json", "{not json"), ("flat.json", '{"a": "http://a:3000"}')):
         path = tmp_path / name
         if content is not None:
@@ -673,6 +720,22 @@ def test_e2b_supplementary_record_matches_the_tools():
         assert set(observed["create (default template)"]) == {"sdk_default_template", "template_name", "cpu_count",
                                                               "memory_mb"}
         assert set(observed["matplotlib png"]) == {"results", "png_bytes_base64"}
+
+
+def test_e2b_code_interpreter_records_match_the_tools():
+    for name in ("ci-agent", "ci-perf"):
+        doc = json.loads((ROOT / f"evidence/runs/e-e2b-2026-10-17/{name}.json").read_text(encoding="utf-8"))
+        assert doc["executor"] == "code-interpreter"
+        assert doc["template"]["name"] == measure_e2b.EXECUTORS["code-interpreter"]
+        assert doc["agent"] == {"instructions": measure_e2b.INSTRUCTIONS, "tools": measure_e2b.TOOLS_SPEC}
+        assert doc["tool"]["file"] == "tools/measure_e2b.py"
+    agent = json.loads((ROOT / "evidence/runs/e-e2b-2026-10-17/ci-agent.json").read_text(encoding="utf-8"))
+    assert agent["inputs"] == {"first": measure_e2b.FIRST_Q, "count": measure_e2b.COUNT_Q,
+                               "resume_wait_s": measure_e2b.RESUME_WAIT_S}
+    perf = json.loads((ROOT / "evidence/runs/e-e2b-2026-10-17/ci-perf.json").read_text(encoding="utf-8"))
+    assert perf["inputs"] == {"cold": measure_e2b.COLD_Q, "warm": measure_e2b.WARM_QS,
+                              "scale": [measure_e2b.SCALE_WRITE, measure_e2b.SCALE_READ],
+                              "live": [measure_e2b.LIVE_WRITE, measure_e2b.LIVE_READ]}
 
 
 # --- measure_code_interpreter: an offline fake of the code-interpreter SDK -----------------------------------

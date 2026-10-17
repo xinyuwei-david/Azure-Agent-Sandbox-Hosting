@@ -19,7 +19,9 @@
     "e-e2b-2026-10-14/agent-runs.json": "703c7af57ad26ab02491a5d762b7fd5de4c4998ce549702b49aa522a208d95d6",
     "e-e2b-2026-10-14/perf.json": "6a46bb8ca6c4dfa5b7779ce1912e29bf1159762b0f06dea6c078abf2edb72551",
     "e-e2b-2026-10-15/latest.json": "3861f0b8d5f8f181831f9275237bb4de15cb89cadf4164e13a9165cd64505209",
-    "e-e2b-2026-10-15/multi.json": "7b42cb1af075252de478426bf4a09603278bbb1f9fd99b0343dfff96c61c5682"
+    "e-e2b-2026-10-15/multi.json": "7b42cb1af075252de478426bf4a09603278bbb1f9fd99b0343dfff96c61c5682",
+    "e-e2b-2026-10-17/ci-agent.json": "31d576dd8189977eefa36aca15807510b423b5ec1b45ee2334848e80e66bfac1",
+    "e-e2b-2026-10-17/ci-perf.json": "0b2a96eadf29aa827f1f0ab86735b9a35b53a37e833dac205c6a8510ccaba006"
   },
   "metrics": {
     "a.create": {
@@ -1955,6 +1957,276 @@
       "unit": "attempts",
       "built_attempt": 4,
       "built_s": 426,
+      "steps": 30
+    },
+    "e.ci.create": {
+      "run": "e-2026-10-17-ci-agent",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "Sandbox.create until it returns, code-interpreter-v1 on host c",
+      "n": 3,
+      "unit": "s",
+      "values": [
+        0.22,
+        0.08,
+        0.07
+      ],
+      "min": 0.07,
+      "max": 0.22,
+      "median": 0.08
+    },
+    "e.ci.first": {
+      "run": "e-2026-10-17-ci-agent",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "first Prompt Agent turn, code-interpreter-v1 on host c",
+      "n": 3,
+      "unit": "s",
+      "values": [
+        3.14,
+        3.85,
+        4.55
+      ],
+      "min": 3.14,
+      "max": 4.55,
+      "median": 3.85
+    },
+    "e.ci.cold": {
+      "run": "e-2026-10-17-ci-agent",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "create + first Prompt Agent turn, added per run, code-interpreter-v1 on host c",
+      "n": 3,
+      "unit": "s",
+      "values": [
+        3.36,
+        3.93,
+        4.62
+      ],
+      "min": 3.36,
+      "max": 4.62,
+      "median": 3.93
+    },
+    "e.ci.warm": {
+      "run": "e-2026-10-17-ci-agent",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "follow-up turn, code-interpreter-v1 on host c",
+      "n": 3,
+      "unit": "s",
+      "values": [
+        4.09,
+        4.17,
+        3.61
+      ],
+      "min": 3.61,
+      "max": 4.17,
+      "median": 4.09
+    },
+    "e.ci.pause": {
+      "run": "e-2026-10-17-ci-agent",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "beta_pause until it returns, code-interpreter-v1 on host c",
+      "n": 3,
+      "unit": "s",
+      "values": [
+        0.29,
+        0.09,
+        0.08
+      ],
+      "min": 0.08,
+      "max": 0.29,
+      "median": 0.09
+    },
+    "e.ci.resume": {
+      "run": "e-2026-10-17-ci-agent",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "Sandbox.connect until it returns, code-interpreter-v1 on host c",
+      "n": 3,
+      "unit": "s",
+      "values": [
+        0.63,
+        0.64,
+        1.43
+      ],
+      "min": 0.63,
+      "max": 1.43,
+      "median": 0.64
+    },
+    "e.ci.first_after_resume": {
+      "run": "e-2026-10-17-ci-agent",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "first turn after resume, code-interpreter-v1 on host c",
+      "n": 3,
+      "unit": "s",
+      "values": [
+        4.33,
+        4.64,
+        4.77
+      ],
+      "min": 4.33,
+      "max": 4.77,
+      "median": 4.64
+    },
+    "e.ci.recover": {
+      "run": "e-2026-10-17-ci-agent",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "connect + first turn after resume, added per run, code-interpreter-v1 on host c",
+      "n": 3,
+      "unit": "s",
+      "values": [
+        4.96,
+        5.28,
+        6.2
+      ],
+      "min": 4.96,
+      "max": 6.2,
+      "median": 5.28
+    },
+    "e.ci.state_kept": {
+      "run": "e-2026-10-17-ci-agent",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "sandbox history grew 1, 2, 3, 4 across pause and resume, code-interpreter-v1 on host c",
+      "n": 3,
+      "unit": "runs",
+      "count": 3
+    },
+    "e.ci.d_cold": {
+      "run": "e-2026-10-17-ci-perf",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "new session until the answer, D-matched 5-run cold protocol, code-interpreter-v1",
+      "n": 5,
+      "unit": "s",
+      "values": [
+        3.347,
+        5.662,
+        3.638,
+        3.306,
+        2.696
+      ],
+      "min": 2.696,
+      "max": 5.662,
+      "median": 3.347
+    },
+    "e.ci.d_sandbox_ready": {
+      "run": "e-2026-10-17-ci-perf",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "code-interpreter-v1 sandbox created until Ready during the 5 cold sessions",
+      "n": 5,
+      "unit": "s",
+      "values": [
+        0.126,
+        0.073,
+        0.072,
+        0.069,
+        0.1
+      ],
+      "min": 0.069,
+      "max": 0.126,
+      "median": 0.073
+    },
+    "e.ci.d_agent_turn": {
+      "run": "e-2026-10-17-ci-perf",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "Prompt Agent turn after sandbox Ready during the 5 cold sessions",
+      "n": 5,
+      "unit": "s",
+      "values": [
+        3.17,
+        5.43,
+        3.48,
+        3.12,
+        2.5
+      ],
+      "min": 2.5,
+      "max": 5.43,
+      "median": 3.17
+    },
+    "e.ci.d_warm": {
+      "run": "e-2026-10-17-ci-perf",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "follow-up turns in the same session, D-matched warm protocol, code-interpreter-v1",
+      "n": 3,
+      "unit": "s",
+      "values": [
+        3.36,
+        3.93,
+        4.59
+      ],
+      "min": 3.36,
+      "max": 4.59,
+      "median": 3.93
+    },
+    "e.ci.c4": {
+      "run": "e-2026-10-17-ci-perf",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "4 new sessions at once on host c, code-interpreter-v1; a refused session never got a sandbox",
+      "n": 4,
+      "unit": "sessions",
+      "answered": 3,
+      "refused": 1,
+      "session_s": [
+        6.431,
+        10.113,
+        15.071
+      ]
+    },
+    "e.ci.c8": {
+      "run": "e-2026-10-17-ci-perf",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "8 new sessions at once on host c, code-interpreter-v1; a refused session never got a sandbox",
+      "n": 8,
+      "unit": "sessions",
+      "answered": 3,
+      "refused": 5,
+      "session_s": [
+        8.587,
+        5.943,
+        7.591
+      ]
+    },
+    "e.ci.pod_lost": {
+      "run": "e-2026-10-17-ci-perf",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "sandbox killed until a replacement code-interpreter-v1 sandbox is Ready",
+      "n": 1,
+      "unit": "s",
+      "values": [
+        0.118
+      ],
+      "value": 0.118
+    },
+    "e.ci.other_session_followup": {
+      "run": "e-2026-10-17-ci-perf",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "follow-up on a different live session after the sandbox kill; that session kept LANTERN-7",
+      "n": 1,
+      "unit": "s",
+      "values": [
+        6.86
+      ],
+      "value": 6.86
+    },
+    "e.ci.idle": {
+      "run": "e-2026-10-17-ci-perf",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "idle sandboxes created one by one on host c until the first refused create, by template and hugepage pool",
+      "n": 1,
+      "unit": "sandboxes",
+      "ci_4096": 3,
+      "ci_pages": 1024,
+      "free_4096": 4083,
+      "base_4096": 15,
+      "base_pages": 256,
+      "ci_2048": 1,
+      "free_2048": 2035,
+      "base_2048": 7
+    },
+    "e.ci.build": {
+      "run": "e-2026-10-17-ci-agent",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "unchanged build_prod.py against host c with the three raised settings of host a; no change between attempts",
+      "n": 3,
+      "unit": "attempts",
+      "built_attempt": 3,
+      "built_s": 92,
+      "cached_through": 19,
       "steps": 30
     }
   }

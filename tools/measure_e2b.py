@@ -12,7 +12,7 @@ Each run creates its own agent version (prompt agent, model ACA_MODEL, the one f
 protocol, then deletes the version, every conversation and every sandbox it created. The instructions, tool schema
 and prompts are the ones that produced evidence/runs/e-e2b-2026-10-14 and are printed in every output file.
 
-agent    per run: Sandbox.create("base") -> FIRST_Q -> COUNT_Q -> beta_pause -> wait 5 s -> Sandbox.connect ->
+agent    per run: Sandbox.create(template) -> FIRST_Q -> COUNT_Q -> beta_pause -> wait 5 s -> Sandbox.connect ->
          COUNT_Q -> COUNT_Q -> kill. The tool writes the question into /home/user/history.json inside the sandbox
          before running the model's code, so the history length must grow 1, 2, 3, 4 across pause and resume.
 perf     cold: n new conversations, each with a new sandbox, one COLD prompt; warm: one session, LANTERN-7 written
@@ -29,6 +29,12 @@ Hosts: without --hosts, one host from E2B_API_URL, E2B_SANDBOX_URL and E2B_API_K
 key). --hosts names a JSON file {"a": {"api_url": ..., "sandbox_url": ..., "api_key_env": "ENV_NAME"}, ...}; keys
 are read from the named environment variables and never written to the output. Every SDK call passes that host's
 api_url, sandbox_url and api_key explicitly, so one process can drive several independent Embed installs.
+
+Executor (--executor) decides how the one tool runs the model's code; the agent, prompts and protocol are the same.
+code-interpreter (default): E2B's Code Interpreter SDK (e2b-code-interpreter), run_code on its code-interpreter-v1
+template, one cell in the sandbox's Jupyter kernel, so variables persist between calls and across pause and resume.
+commands: the 2026-10-14/15 runs, commands.run starting python3 for each call on the base template; only files
+persist. Both first record the question in /home/user/history.json; sandbox_tool_s times the whole call.
 
 Clocks: time.perf_counter() in this process. create_total_s / sandbox_create_to_ready_s: Sandbox.create until it
 returns (Running). A turn's wall_s / agent_turn_s: first POST /openai/v1/responses until the final answer, including
@@ -98,7 +104,8 @@ LIVE_READ = "Use run_in_e2b_sandbox to read /home/user/live.txt. What is the cod
 PAUSE_WRITE = "Use run_in_e2b_sandbox to write PAUSED-{h} to /home/user/paused.txt. Reply only OK."
 PAUSE_READ = "Use run_in_e2b_sandbox to read /home/user/paused.txt. What does it say? Word only."
 RESUME_WAIT_S = 5
-TEMPLATE = "base"
+EXECUTORS = {"code-interpreter": "code-interpreter-v1", "commands": "base"}
+EXECUTOR = "code-interpreter"
 
 
 class SettingMissing(RuntimeError):
@@ -144,12 +151,25 @@ def token() -> str:
     return out.stdout.strip()
 
 
-def load_sdk():
+def load_sdk(executor: str = "commands"):
     try:
         from e2b import Sandbox, SandboxQuery, SandboxState
+        if executor == "code-interpreter":
+            from e2b_code_interpreter import Sandbox
         return Sandbox, SandboxQuery, SandboxState
     except ImportError as exc:
-        raise RuntimeError("Install the E2B SDK version used in the measured run first: pip install e2b==2.46.0") from exc
+        raise RuntimeError("Install the SDKs first: pip install e2b==2.56.0 e2b-code-interpreter==2.11.0") from exc
+
+
+def sdk_versions() -> dict:
+    from importlib.metadata import PackageNotFoundError, version
+    found = {}
+    for name in ("e2b", "e2b-code-interpreter"):
+        try:
+            found[name] = version(name)
+        except PackageNotFoundError:
+            found[name] = None
+    return found
 
 
 class Foundry:
@@ -225,7 +245,7 @@ class Host:
         return {"api_url": self.api_url, "sandbox_url": self.sandbox_url, "api_key": self._key}
 
     def create(self):
-        return self.Sandbox.create(TEMPLATE, timeout=300, **self.opts())
+        return self.Sandbox.create(EXECUTORS[EXECUTOR], timeout=300, **self.opts())
 
     def connect(self, sandbox_id: str):
         return self.Sandbox.connect(sandbox_id, **self.opts())
@@ -291,6 +311,37 @@ def sandbox_exec_python(sbx, code: str, question: str) -> dict:
             "state": json.loads(state_line)}
 
 
+def sandbox_run_code(sbx, code: str, question: str) -> dict:
+    """Code Interpreter: the same history step, then the model's code, as one cell in the sandbox's kernel."""
+    cell = (
+        "import json as _json, os as _os, platform as _platform\n"
+        "_p = '/home/user/history.json'\n"
+        "_h = _json.load(open(_p)) if _os.path.exists(_p) else []\n"
+        "prior_questions = len(_h)\n"
+        f"_h.append({{'turn': prior_questions + 1, 'question': {question!r}}})\n"
+        "_json.dump(_h, open(_p, 'w'))\n"
+        "history_length = len(_h)\n"
+        "print('__STATE__=' + _json.dumps({'prior_questions': prior_questions, 'history_length': history_length, "
+        "'kernel': _platform.release()}))\n"
+        f"{code}\n"
+    )
+    t0 = time.perf_counter()
+    ex = sbx.run_code(cell, timeout=60)
+    elapsed = round(time.perf_counter() - t0, 3)
+    if ex.error is not None:
+        raise RuntimeError(f"sandbox kernel {ex.error.name}: {ex.error.value}")
+    lines = [ln for ln in "".join(ex.logs.stdout).splitlines() if ln.strip()]
+    state_line = next((ln[len("__STATE__="):] for ln in lines if ln.startswith("__STATE__=")), "{}")
+    out = [ln for ln in lines if not ln.startswith("__STATE__=")] + ([ex.text] if ex.text else [])
+    return {"exec_s": elapsed, "stdout": "\n".join(out).strip(), "state": json.loads(state_line)}
+
+
+def run_tool(sbx, code: str, question: str) -> dict:
+    if EXECUTOR == "commands":
+        return sandbox_exec_python(sbx, code, question)
+    return sandbox_run_code(sbx, code, question)
+
+
 def extract_text(doc: dict) -> str:
     return " ".join(c["text"] for item in doc.get("output", []) or [] if item.get("type") == "message"
                     for c in item.get("content", []) or [] if c.get("type") in ("output_text", "text")
@@ -314,7 +365,7 @@ def ask(fd: Foundry, version: str, conv_id: str, sbx, question: str) -> dict:
         for call in fn_calls:
             calls += 1
             args = json.loads(call.get("arguments") or "{}")
-            info = sandbox_exec_python(sbx, args.get("python_code", "print('ok')"), question)
+            info = run_tool(sbx, args.get("python_code", "print('ok')"), question)
             tool_s += info["exec_s"]
             state = info["state"]
             outputs.append({"type": "function_call_output", "call_id": call["call_id"], "output": json.dumps({
@@ -325,7 +376,7 @@ def ask(fd: Foundry, version: str, conv_id: str, sbx, question: str) -> dict:
                                                         "agent_reference": ref})
     if calls == 0:
         # The 2026-10-14 driver kept the sandbox history in step when the model answered without the tool.
-        info = sandbox_exec_python(sbx, "print('fallback_sync')", question)
+        info = run_tool(sbx, "print('fallback_sync')", question)
         tool_s += info["exec_s"]
         state = info["state"]
     answer = extract_text(resp)
@@ -644,6 +695,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         p = sub.add_parser(name, help=text)
         p.add_argument("--hosts", type=Path, help="JSON file naming several Embed installs (see the module help)")
         p.add_argument("--out-dir", type=Path, default=ROOT / "evidence-local")
+        p.add_argument("--executor", choices=sorted(EXECUTORS), default="code-interpreter",
+                       help="how the tool runs the model's code (default code-interpreter; see the module help)")
         if name in ("agent", "perf"):
             p.add_argument("--host", help="host name from --hosts to run on (default: the first)")
         if name == "agent":
@@ -675,10 +728,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def main(argv: list[str] | None = None) -> int:
+    global EXECUTOR
     args = parse_args(argv)
+    EXECUTOR = args.executor
     try:
         endpoint, model = need_env("PROJECT_ENDPOINT"), need_env("ACA_MODEL")
-        sdk = load_sdk()
+        sdk = load_sdk(EXECUTOR)
         hosts = load_hosts(args.hosts, sdk)
         pick = getattr(args, "host", None) or next(iter(hosts))
         if pick not in hosts or (args.mode == "hostloss" and args.lose not in hosts):
@@ -691,7 +746,8 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     args.out_dir.mkdir(parents=True, exist_ok=True)
     out_path = args.out_dir / f"e2b-{args.mode}-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}.json"
-    doc: dict = {"mode": args.mode, "started_at": now_iso(), "model": model, "template": TEMPLATE,
+    doc: dict = {"mode": args.mode, "started_at": now_iso(), "model": model, "executor": EXECUTOR,
+                 "template": EXECUTORS[EXECUTOR], "sdk": sdk_versions(),
                  "tool_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
                  "agent": {"name": AGENT_NAME, "instructions": INSTRUCTIONS, "tools": TOOLS_SPEC},
                  "hosts": {n: {"api_url": h.api_url, "sandbox_url": h.sandbox_url} for n, h in hosts.items()},

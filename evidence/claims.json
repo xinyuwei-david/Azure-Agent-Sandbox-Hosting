@@ -30,7 +30,9 @@
     "e-2026-10-14-agent",
     "e-2026-10-14-perf",
     "e-2026-10-15-latest",
-    "e-2026-10-15-multi"
+    "e-2026-10-15-multi",
+    "e-2026-10-17-ci-agent",
+    "e-2026-10-17-ci-perf"
   ],
   "letter_mapping": {
     "A": {
@@ -151,8 +153,8 @@
       "session_location_zh": "你开启嵌套虚拟化（`/dev/kvm`）的 Azure VM",
       "memory_suspend_en": "Yes: `beta_pause` saves Firecracker memory and disk (`vm_state` + `mem_file`)",
       "memory_suspend_zh": "支持：`beta_pause` 保存 Firecracker 内存和磁盘快照（`vm_state` + `mem_file`）",
-      "selectable_compute_en": "Gen2 VM SKUs with nested virtualization, such as `Standard_D4ds_v7`; E2B `base` template defaults to 2 vCPU / 512 MB",
-      "selectable_compute_zh": "支持嵌套虚拟化的 Gen2 VM SKU，如 `Standard_D4ds_v7`；E2B `base` 模板默认 2 vCPU / 512 MB",
+      "selectable_compute_en": "Gen2 VM SKUs with nested virtualization, such as `Standard_D4ds_v7`; E2B's `code-interpreter-v1` template is 2 vCPU / 2 GiB (`base`: 2 vCPU / 512 MB)",
+      "selectable_compute_zh": "支持嵌套虚拟化的 Gen2 VM SKU，如 `Standard_D4ds_v7`；E2B 的 `code-interpreter-v1` 模板为 2 vCPU / 2 GiB（`base`：2 vCPU / 512 MB）",
       "idle_policy_en": "[E2B docs](https://e2b.dev/docs/sandbox): per-sandbox timeout (default 5 min) and explicit `beta_pause` / `connect`",
       "idle_policy_zh": "[E2B 文档](https://e2b.dev/docs/sandbox)：按沙箱设置超时（默认 5 min），支持显式 `beta_pause` / `connect`",
       "boundary_en": "One Firecracker micro-VM per sandbox",

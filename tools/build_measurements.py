@@ -645,6 +645,90 @@ def build(runs: dict[str, dict], index: dict[str, str]) -> dict:
          "steps": built[0]["steps"]},
         "unchanged build_prod.py against host a; host settings raised between attempts")
 
+    # E · 2026-10-17, the agent's code run by E2B's Code Interpreter (run_code) in code-interpreter-v1, host c
+    ca, cp = runs["e-e2b-2026-10-17/ci-agent.json"], runs["e-e2b-2026-10-17/ci-perf.json"]
+    for doc in (ca, cp):
+        if doc["executor"] != "code-interpreter" or doc["template"]["name"] != "code-interpreter-v1":
+            raise BuildError(f"{doc['run_id']}: not produced with the code-interpreter executor")
+        if doc["leftover_sandboxes"] != 0 or doc["agent_version_deleted"] is not True:
+            raise BuildError(f"{doc['run_id']}: left a sandbox or the agent version")
+    if ca["tool"] != cp["tool"] or ca["agent"] != cp["agent"]:
+        raise BuildError("E code-interpreter: the two runs used different tool revisions or agents")
+    crid, prid = ca["run_id"], cp["run_id"]
+    e_agent_runs(crid, "e.ci", ca["runs"], "code-interpreter-v1 on host c")
+    if {r[t]["tool_calls"] for r in ca["runs"] for t in ("first", "warm", "first_after_resume", "warm_after_resume")} != {1}:
+        raise BuildError("E code-interpreter agent runs: expected one sandbox tool call per turn")
+    cold = cp["cold"]
+    if len(cold) != 5 or not all(t["http"] == 200 and t["correct"] for t in cold):
+        raise BuildError("E code-interpreter cold: expected 5 answered, correct new sessions")
+    if any(t["sandbox_create_to_ready_s"] > t["wall_s"] for t in cold):
+        raise BuildError("E code-interpreter cold: sandbox create-to-Ready exceeds the session wall time")
+    put("e.ci.d_cold", prid, "LOCAL_MEASUREMENT", stat([t["wall_s"] for t in cold]),
+        "new session until the answer, D-matched 5-run cold protocol, code-interpreter-v1")
+    put("e.ci.d_sandbox_ready", prid, "LOCAL_MEASUREMENT", stat([t["sandbox_create_to_ready_s"] for t in cold]),
+        "code-interpreter-v1 sandbox created until Ready during the 5 cold sessions")
+    put("e.ci.d_agent_turn", prid, "LOCAL_MEASUREMENT", stat([t["agent_turn_s"] for t in cold]),
+        "Prompt Agent turn after sandbox Ready during the 5 cold sessions")
+    warm = cp["warm"]["turns"]
+    if (not cp["warm"]["remembered"] or warm[1]["answer"] != "LANTERN-7" or any(t["http"] != 200 for t in warm)
+            or len(warm) != 4):
+        raise BuildError("E code-interpreter warm session: expected 4 answered turns that remember LANTERN-7")
+    put("e.ci.d_warm", prid, "LOCAL_MEASUREMENT", stat([t["wall_s"] for t in warm[1:]]),
+        "follow-up turns in the same session, D-matched warm protocol, code-interpreter-v1")
+    for lv in cp["at_once"]:
+        n, ss = lv["sessions_at_once"], lv["sessions"]
+        ok = [s for s in ss if s.get("remembered")]
+        refused = [s for s in ss if not s.get("remembered")]
+        if len(ss) != n or len(ok) != lv["answered"] or lv["per_host"] != {"c": {"sessions": n, "answered": len(ok)}}:
+            raise BuildError(f"E code-interpreter {n} at once: counts differ from the session records")
+        if not all("Failed to place sandbox" in s.get("error", "") for s in refused):
+            raise BuildError(f"E code-interpreter {n} at once: a session failed for another reason than a refused sandbox")
+        if any(s["sandbox_deleted"] is not True or s["conversation_deleted"] is not True for s in ss):
+            raise BuildError(f"E code-interpreter {n} at once: a session left its sandbox or conversation")
+        put(f"e.ci.c{n}", prid, "LOCAL_MEASUREMENT",
+            {"n": n, "unit": "sessions", "answered": len(ok), "refused": len(refused),
+             "session_s": [s["session_s"] for s in ok]},
+            f"{n} new sessions at once on host c, code-interpreter-v1; a refused session never got a sandbox")
+    rec = cp["recovery"]
+    live = rec["followup_on_live_session"]
+    if not live["state_preserved"] or live["answer"] != "LANTERN-7" or live["http"] != 200:
+        raise BuildError("E code-interpreter: the live session used after the sandbox kill did not keep LANTERN-7")
+    put("e.ci.pod_lost", prid, "LOCAL_MEASUREMENT", single(rec["replacement_ready_s"]),
+        "sandbox killed until a replacement code-interpreter-v1 sandbox is Ready")
+    put("e.ci.other_session_followup", prid, "LOCAL_MEASUREMENT", single(live["wall_s"]),
+        "follow-up on a different live session after the sandbox kill; that session kept LANTERN-7")
+    cap = cp["idle_capacity"]
+    if cap["restore_rc"] != 0 or cap["restored_meminfo"]["hp_total"] != cap["hugepages_env_found"]:
+        raise BuildError("E idle capacity: the hugepage pool was not restored")
+    memory_mb = {"code-interpreter-v1": ca["template"]["memory_mb"], "base": 512}
+    idle = {"n": 1, "unit": "sandboxes"}
+    for ph in cap["phases"]:
+        pool = ph["hugepages_env"]
+        if ph["compose_up_rc"] != 0 or ph["meminfo"]["hp_total"] != pool:
+            raise BuildError(f"E idle capacity: the {pool}-page pool was not applied")
+        for r in ph["results"]:
+            short = "ci" if r["template"] == "code-interpreter-v1" else "base"
+            if r["leftover"] != 0 or r["killed"] != r["created"] or not all(row[2] for row in r["rows"]):
+                raise BuildError(f"E idle capacity {pool}/{short}: a check failed or a sandbox was left")
+            if "Failed to place sandbox" not in (r["stopped_by"] or {}).get("message", ""):
+                raise BuildError(f"E idle capacity {pool}/{short}: creates did not end in a refused placement")
+            pages = memory_mb[r["template"]] * 1024 // cap["hugepage_size_kb"]
+            if r["before"]["hp_free"] // pages != r["running_at_once"]:
+                raise BuildError(f"E idle capacity {pool}/{short}: the count differs from free pages / template pages")
+            idle[f"{short}_{pool}"] = r["running_at_once"]
+            idle[f"{short}_pages"] = pages
+            idle[f"free_{pool}"] = r["before"]["hp_free"]
+    put("e.ci.idle", prid, "LOCAL_MEASUREMENT", idle,
+        "idle sandboxes created one by one on host c until the first refused create, by template and hugepage pool")
+    attempts = ca["build"]["attempts"]
+    built = [b for b in attempts if b["result"] == "built"]
+    if len(built) != 1 or built[0]["step"] != built[0]["steps"] or built[0] is not attempts[-1]:
+        raise BuildError("E code-interpreter on host c: expected exactly one complete build, the last attempt")
+    put("e.ci.build", crid, "LOCAL_MEASUREMENT",
+        {"n": len(attempts), "unit": "attempts", "built_attempt": built[0]["attempt"], "built_s": built[0]["seconds"],
+         "cached_through": built[0]["cached_steps"][1], "steps": built[0]["steps"]},
+        "unchanged build_prod.py against host c with the three raised settings of host a; no change between attempts")
+
     return {"schema": 1, "built_from": dict(sorted(index.items())), "metrics": m}
 
 

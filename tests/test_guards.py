@@ -225,6 +225,13 @@ def test_c_deployment_requires_a_real_application_request(name):
     assert any("real invocation" in error for error in vd.check_commands(p))
 
 
+@pytest.mark.parametrize("name", ("README.md", "README_CN.md"))
+def test_e_deployment_requires_a_real_application_call(name):
+    p = pages()
+    p[name] = p[name].replace("python tools/e2b_agent.py", "python -c 'import e2b'", 1)
+    assert any("real invocation" in error for error in vd.check_commands(p))
+
+
 @pytest.mark.parametrize("name,old,new", (("README.md", "| GA (2026-06) |", "| Public preview |"),
                                           ("README_CN.md", "| GA（2026-06） |", "| 公开预览 |")))
 def test_b_status_cannot_revert_to_preview(name, old, new):
@@ -240,6 +247,16 @@ def test_steps_cannot_close_the_readers_shell(name, closing):
     p = pages()
     p[name] = p[name].replace("git clone --filter=blob:none", closing + "git clone --filter=blob:none", 1)
     assert any("interactive shell" in e for e in vd.check_commands(p))
+
+
+@pytest.mark.parametrize("name", ("README.md", "README_CN.md"))
+def test_steps_bash_blocks_parse(name):
+    p = pages()
+    assert vd.check_shell_syntax(p) == []
+    guard = '  echo "C_ALLOW_CIDR is not set: put your public egress CIDR in .env, reload it and run this block again" >&2\n'
+    assert guard in p[name]
+    p[name] = p[name].replace(guard, "", 1)
+    assert any(f"{name}: bash block" in e for e in vd.check_shell_syntax(p))
 
 
 @pytest.mark.parametrize("name", ("README.md", "README_CN.md"))

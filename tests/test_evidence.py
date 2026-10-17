@@ -175,6 +175,32 @@ def test_d_concurrency_requires_every_session_record():
         bm.build(runs, index)
 
 
+def test_e_code_interpreter_capacity_matches_the_free_pages(built):
+    _, _, m = built
+    idle = m["e.ci.idle"]
+    assert (idle["ci_pages"], idle["base_pages"]) == (1024, 256)
+    for pool in (4096, 2048):
+        assert idle[f"ci_{pool}"] == idle[f"free_{pool}"] // idle["ci_pages"]
+        assert idle[f"base_{pool}"] == idle[f"free_{pool}"] // idle["base_pages"]
+    assert (m["e.ci.c4"]["answered"], m["e.ci.c8"]["answered"]) == (idle["ci_4096"], idle["ci_4096"])
+
+
+def test_e_code_interpreter_capacity_count_cannot_drift():
+    runs, index = bm.load_runs()
+    runs["e-e2b-2026-10-17/ci-perf.json"]["idle_capacity"]["phases"][0]["results"][0]["running_at_once"] = 4
+    with pytest.raises(bm.BuildError, match="free pages / template pages"):
+        bm.build(runs, index)
+
+
+def test_e_code_interpreter_refusal_must_be_a_placement_refusal():
+    runs, index = bm.load_runs()
+    level = runs["e-e2b-2026-10-17/ci-perf.json"]["at_once"][0]
+    refused = next(s for s in level["sessions"] if not s.get("remembered"))
+    refused["error"] = "ReadTimeout: the model did not answer"
+    with pytest.raises(bm.BuildError, match="another reason than a refused sandbox"):
+        bm.build(runs, index)
+
+
 def test_render_rejects_non_standard_json_numbers():
     with pytest.raises(ValueError, match="JSON compliant"):
         bm.render({"value": float("nan")})
