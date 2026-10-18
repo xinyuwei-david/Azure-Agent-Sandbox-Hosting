@@ -250,7 +250,7 @@ workshop 的脚本（`module-01/setup.sh`、`module-03/prepare-agent-sandbox.sh`
 | **中位数** | **1.35** | **0.0** | **3.51** | **4.86** | **0.84** | **10.67** | **1.22** | **1.88** | **2.96** |  |
 <!-- END GENERATED: a-nv -->
 
-不挂卷时，停止再恢复后对话接着增长 <!--v:a.nv.state_kept.count-->3<!--/v-->/<!--v:a.nv.state_kept.n-->3<!--/v--> 次：agent 的状态文件留在沙箱磁盘上，Memory 快照把它保住了。与 `a-2026-10-09-agent` 相比，冷启动从 <!--v:a.cold.median-->28.0<!--/v--> s 降到 <!--v:a.nv.cold.median-->4.86<!--/v--> s，恢复到回答从 <!--v:a.recover.median-->14.45<!--/v--> s 降到 <!--v:a.nv.recover.median-->2.96<!--/v--> s。第一处差别是创建（<!--v:a.create.median-->24.25<!--/v--> s 对 <!--v:a.nv.create.median-->1.35<!--/v--> s）；第二处是恢复后沙箱内的第一个回答（<!--v:a.first_after_resume.median-->12.84<!--/v--> s 对 <!--v:a.nv.first_after_resume.median-->1.88<!--/v--> s）。
+不挂卷时，停止再恢复后对话接着增长 <!--v:a.nv.state_kept.count-->3<!--/v-->/<!--v:a.nv.state_kept.n-->3<!--/v--> 次：agent 的状态文件留在沙箱磁盘上，Memory 快照把它保住了。与 `a-2026-10-09-agent` 相比，冷启动中位数从 <!--v:a.cold.median-->28.0<!--/v--> s 降到 <!--v:a.nv.cold.median-->4.86<!--/v--> s，恢复到回答中位数从 <!--v:a.recover.median-->14.45<!--/v--> s 降到 <!--v:a.nv.recover.median-->2.96<!--/v--> s。要比较能加起来的分项，每天各取总耗时为中位数的那一次：冷启动带卷是创建 <!--v:a.cold_mid.create-->24.12<!--/v--> s + 回答 <!--v:a.cold_mid.answer-->3.88<!--/v--> s，不挂卷是 <!--v:a.nv.cold_mid.create-->1.35<!--/v--> s + <!--v:a.nv.cold_mid.answer-->3.51<!--/v--> s，差别在创建；恢复到回答带卷是恢复 <!--v:a.recover_mid.resume-->1.61<!--/v--> s + 回答 <!--v:a.recover_mid.answer-->12.84<!--/v--> s，不挂卷是 <!--v:a.nv.recover_mid.resume-->1.22<!--/v--> s + <!--v:a.nv.recover_mid.answer-->1.74<!--/v--> s，差别在恢复后沙箱内的第一个回答。表中单独一列的中位数来自不同的实测，不能相加。
 
 **边界。**
 - 共三次，都是显式停止和恢复；没有等 900 s 空闲后的自动挂起。

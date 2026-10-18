@@ -143,6 +143,17 @@ def build(runs: dict[str, dict], index: dict[str, str]) -> dict:
         kept = sum(r["first_after_resume"]["history_length"] > r["warm"]["history_length"] for r in ar)
         put(f"{prefix}.state_kept", rid, "LOCAL_MEASUREMENT", {"n": len(ar), "unit": "runs", "count": kept},
             "conversation history length kept growing across stop and resume")
+        # Column medians can come from different runs; these parts all belong to the run with the median total.
+        for key, total, call, turn in (("cold", "cold_total_s", "create", "first"),
+                                       ("recover", "recover_total_s", "resume", "first_after_resume")):
+            mid = [r for r in ar if r[total] == m[f"{prefix}.{key}"]["median"]]
+            if len(mid) != 1:
+                raise BuildError(f"{rel}: expected exactly one run with the median {total}")
+            r = mid[0]
+            put(f"{prefix}.{key}_mid", rid, "LOCAL_MEASUREMENT",
+                {**single(r[total]), "run_no": r["run"], call: r[f"{call}_total_s"],
+                 "wait": r[turn].get("ready_wait_s", 0), "answer": r[turn]["guest_s"]},
+                f"the run with the median {key}, and its own {call} + wait + answer")
         return a.get("earlier_attempts", [])
 
     agent("a", "a-aca-2026-10-09/agent-runs.json", "full spec")
@@ -179,9 +190,6 @@ def build(runs: dict[str, dict], index: dict[str, str]) -> dict:
     small_resume = [r["resume_total_s"] for r in att["runs"] if r["config"] in ("image", "vnet", "port")]
     put("a.attr.resume_small", att["run_id"], "LOCAL_MEASUREMENT", stat(small_resume),
         "image alone, image + VNet, image + port: every resume call until Running")
-    put("a.blob_mount_overhead", att["run_id"], "DERIVED",
-        single(round(m["a.create"]["median"] - m["a.attr.image"]["median"], 2)),
-        "median create with private Blob volume (24.25 s) minus median create with image only (2.31 s)")
     survived = [r["process_survived"] for r in att["runs"]]
     put("a.attr.process_survived", att["run_id"], "LOCAL_MEASUREMENT",
         {"n": len(survived), "unit": "runs", "count": sum(bool(x) for x in survived)},

@@ -143,6 +143,8 @@ def check_information_alignment(pages: dict[str, str]) -> list[str]:
         ("lifecycle_owner", "Who runs the session lifecycle", "谁负责会话生命周期"),
         ("session_location", "Where the session's micro-VM runs", "会话的 micro-VM 跑在哪里"),
         ("memory_suspend", "Suspend with memory snapshot", "带内存快照的挂起"),
+        ("state_storage", "External storage to keep data across suspend and resume",
+         "挂起再恢复后保留数据，是否必须挂外置存储"),
         ("selectable_compute", "Selectable size / node SKU (docs)", "可选规格 / 节点 SKU（文档）"),
     ):
         values_en = " | ".join(claims["paths"][letter][f"{field}_en"] for letter in letters)

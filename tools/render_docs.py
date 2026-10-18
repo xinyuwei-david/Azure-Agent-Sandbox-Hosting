@@ -119,6 +119,16 @@ def cold_start_formulas(c: Ctx) -> list[str]:
     ]
 
 
+def mid_parts(c: Ctx, key: str) -> str:
+    """Parts of the run with the median total; medians of separate parts can come from different runs."""
+    r = c.m[key]
+    call = "create" if "create" in r else "resume"
+    out = c.t(f"{call} {num(r[call])} s", f"{'创建' if call == 'create' else '恢复'} {num(r[call])} s")
+    if r["wait"]:
+        out += c.t(f" + wait {num(r['wait'])} s", f" + 等待 {num(r['wait'])} s")
+    return out + c.t(f" + answer {num(r['answer'])} s", f" + 回答 {num(r['answer'])} s")
+
+
 def comparison_details(c: Ctx) -> tuple[list[str], list[list[str]], str]:
     m = c.m
     k = m["b.sess.state_kept"]
@@ -185,28 +195,30 @@ def comparison_details(c: Ctx) -> tuple[list[str], list[list[str]], str]:
              f"不是独立计时的 Ready → 回答（agent 轮次 {rng(m['d.agent_turn'])} s）"),
          c.t(f"{c.med('e.ci.first')} (A protocol); {c.med('e.ci.d_agent_turn')} (D protocol)",
              f"{c.med('e.ci.first')}（A 口径）；{c.med('e.ci.d_agent_turn')}（D 口径）")],
-        [c.t("**Cold start with a private Blob volume (total)**", "**带私有 Blob 卷的冷启动总计**"),
-         c.t(f"**{num(m['a.cold']['median'])} s** median ({rng(m['a.cold'])}; n={m['a.cold']['n']}); "
-             "SDK create + answer inside sandbox",
-             f"**{num(m['a.cold']['median'])} s** 中位数（{rng(m['a.cold'])}；n={m['a.cold']['n']}）；SDK 创建 + 沙箱内回答"),
-         c.t("no external volume (the platform restores `$HOME` and `/files`)",
-             "不挂外部卷（平台恢复 `$HOME` 和 `/files`）"),
-         c.t(f"**{num(m['c.p.cold']['median'])} s** median ({rng(m['c.p.cold'])}; n={m['c.p.cold']['n']}), added per "
-             f"run; 2026-09-27: {num(m['c.cold']['value'])} s (n=1; apply → Ready {num(m['c.apply_ready']['value'])} s "
-             f"+ answer {num(m['c.first']['value'])} s at the LoadBalancer)",
-             f"**{num(m['c.p.cold']['median'])} s** 中位数（{rng(m['c.p.cold'])}；n={m['c.p.cold']['n']}），每次实测相加；"
-             f"2026-09-27：{num(m['c.cold']['value'])} s（n=1；apply → Ready {num(m['c.apply_ready']['value'])} s + "
-             f"在 LoadBalancer 处回答 {num(m['c.first']['value'])} s）"),
-         c.t("no external volume in the session pod", "会话 pod 未挂外部卷"),
-         c.t("no external volume (templates and snapshots stay on the host VM's OS disk)",
-             "不挂外部卷（模板和快照存在宿主 VM 的系统盘上）")],
+        [c.t("**Cold start with a private Blob volume (total)**<br>Optional: to keep data across suspend and resume, "
+             "only C needs a volume",
+             "**带私有 Blob 卷的冷启动总计**<br>可选：想在挂起再恢复后保留数据，只有 C 必须挂卷"),
+         c.t(f"**{num(m['a.cold']['median'])} s** median ({rng(m['a.cold'])}; n={m['a.cold']['n']}), SDK create + answer "
+             f"inside the sandbox, added per run (2026-10-09); median run: {mid_parts(c, 'a.cold_mid')}",
+             f"**{num(m['a.cold']['median'])} s** 中位数（{rng(m['a.cold'])}；n={m['a.cold']['n']}），SDK 创建 + 沙箱内回答，"
+             f"每次实测相加（2026-10-09）；中位数那次：{mid_parts(c, 'a.cold_mid')}"),
+         c.t("not needed: the platform restores `$HOME` and `/files`", "不需要：平台恢复 `$HOME` 和 `/files`"),
+         c.t(f"**required** to keep data; **{num(m['c.p.cold']['median'])} s** median ({rng(m['c.p.cold'])}; "
+             f"n={m['c.p.cold']['n']}), added per run; 2026-09-27: {num(m['c.cold']['value'])} s (n=1; apply → Ready "
+             f"{num(m['c.apply_ready']['value'])} s + answer {num(m['c.first']['value'])} s at the LoadBalancer)",
+             f"**必须挂卷**才能保留数据；**{num(m['c.p.cold']['median'])} s** 中位数（{rng(m['c.p.cold'])}；"
+             f"n={m['c.p.cold']['n']}），每次实测相加；2026-09-27：{num(m['c.cold']['value'])} s（n=1；apply → Ready "
+             f"{num(m['c.apply_ready']['value'])} s + 在 LoadBalancer 处回答 {num(m['c.first']['value'])} s）"),
+         c.t("not needed: the file written before `:stop` is kept", "不需要：`:stop` 前写入的文件会保留"),
+         c.t("not needed: templates and snapshots stay on the host VM's OS disk",
+             "不需要：模板和快照存在宿主 VM 的系统盘上")],
         [c.t("└ volume overhead", "└ 子项：挂卷附加耗时"),
-         c.t(f"+{num(m['a.blob_mount_overhead']['value'])} s median vs image only (create → Running {c.med('a.create')}); "
-             "without the volume the Memory snapshot kept the conversation across stop and resume "
-             f"{m['a.nv.state_kept']['count']}/{m['a.nv.state_kept']['n']} (2026-10-18)",
-             f"比仅镜像多 +{num(m['a.blob_mount_overhead']['value'])} s 中位数（create → Running {c.med('a.create')}）；"
-             f"不挂卷时 Memory 快照在停止和恢复之间保住了对话 {m['a.nv.state_kept']['count']}/{m['a.nv.state_kept']['n']}"
-             "（2026-10-18）"),
+         c.t(f"create → Running in one attribution run (2026-10-09): {rng(m['a.attr.small'])} s without the volume "
+             f"(image, VNet or port alone; n={m['a.attr.small']['n']}), {rng(m['a.attr.vnetvolume'])} s with it "
+             f"(image + VNet + volume; n={m['a.attr.vnetvolume']['n']})",
+             f"同一次归因实测（2026-10-09）里 create → Running：不挂卷 {rng(m['a.attr.small'])} s（只加镜像、VNet 或端口；"
+             f"n={m['a.attr.small']['n']}），挂卷 {rng(m['a.attr.vnetvolume'])} s（镜像 + VNet + 卷；"
+             f"n={m['a.attr.vnetvolume']['n']}）"),
          c.t("none", "无"),
          c.t(f"none measurable: apply → Ready {c.med('c.p.apply_ready')} with the PVC, {c.med('c.n.apply_ready')} "
              "without",
@@ -245,12 +257,11 @@ def comparison_details(c: Ctx) -> tuple[list[str], list[list[str]], str]:
              f"暂停 {c.med('e.ci.pause')}；恢复 → Running {c.med('e.ci.resume')}")],
         [c.t("**Resume request → first answer (stop excluded)**", "**发起恢复 → 第一个回答（不含停止）**"),
          c.t(f"with the Blob volume {c.med('a.recover')}; without it {c.med('a.nv.recover')}, conversation kept "
-             f"{m['a.nv.state_kept']['count']}/{m['a.nv.state_kept']['n']} (2026-10-18). Most of the difference is the "
-             f"first answer after resume, inside the sandbox: {num(m['a.first_after_resume']['median'])} s with the "
-             f"volume, {num(m['a.nv.first_after_resume']['median'])} s without",
+             f"{m['a.nv.state_kept']['count']}/{m['a.nv.state_kept']['n']} (2026-10-18). Median runs, answer timed inside "
+             f"the sandbox: {mid_parts(c, 'a.recover_mid')} with the volume, {mid_parts(c, 'a.nv.recover_mid')} without",
              f"带 Blob 卷 {c.med('a.recover')}；不挂卷 {c.med('a.nv.recover')}，对话接着继续 "
-             f"{m['a.nv.state_kept']['count']}/{m['a.nv.state_kept']['n']}（2026-10-18）。差别主要在恢复后沙箱内的第一个回答："
-             f"带卷 {num(m['a.first_after_resume']['median'])} s，不挂卷 {num(m['a.nv.first_after_resume']['median'])} s"),
+             f"{m['a.nv.state_kept']['count']}/{m['a.nv.state_kept']['n']}（2026-10-18）。中位数那次（回答在沙箱内计时）："
+             f"带卷 {mid_parts(c, 'a.recover_mid')}，不挂卷 {mid_parts(c, 'a.nv.recover_mid')}"),
          c.t(f"{c.med('b.sess.resume')}: the next turn on the stopped session gets new compute with `$HOME` restored; "
              f"file written before the stop read back {k['files']}/{k['n']}, question count kept growing "
              f"{k['conversation']}/{k['n']}. After {idle_minutes(m, 'b.idle')} min without requests the status "

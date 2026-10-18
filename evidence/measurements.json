@@ -183,6 +183,36 @@
       "unit": "runs",
       "count": 3
     },
+    "a.cold_mid": {
+      "run": "a-2026-10-09-agent",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "the run with the median cold, and its own create + wait + answer",
+      "n": 1,
+      "unit": "s",
+      "values": [
+        28.0
+      ],
+      "value": 28.0,
+      "run_no": 2,
+      "create": 24.12,
+      "wait": 0,
+      "answer": 3.88
+    },
+    "a.recover_mid": {
+      "run": "a-2026-10-09-agent",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "the run with the median recover, and its own resume + wait + answer",
+      "n": 1,
+      "unit": "s",
+      "values": [
+        14.45
+      ],
+      "value": 14.45,
+      "run_no": 2,
+      "resume": 1.61,
+      "wait": 0,
+      "answer": 12.84
+    },
     "a.nv.create": {
       "run": "a-2026-10-18-novolume",
       "label": "LOCAL_MEASUREMENT",
@@ -365,6 +395,36 @@
       "unit": "runs",
       "count": 3
     },
+    "a.nv.cold_mid": {
+      "run": "a-2026-10-18-novolume",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "the run with the median cold, and its own create + wait + answer",
+      "n": 1,
+      "unit": "s",
+      "values": [
+        4.86
+      ],
+      "value": 4.86,
+      "run_no": 2,
+      "create": 1.35,
+      "wait": 0.0,
+      "answer": 3.51
+    },
+    "a.nv.recover_mid": {
+      "run": "a-2026-10-18-novolume",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "the run with the median recover, and its own resume + wait + answer",
+      "n": 1,
+      "unit": "s",
+      "values": [
+        2.96
+      ],
+      "value": 2.96,
+      "run_no": 1,
+      "resume": 1.22,
+      "wait": 0.0,
+      "answer": 1.74
+    },
     "a.nv.earlier": {
       "run": "a-2026-10-18-novolume",
       "label": "LOCAL_MEASUREMENT",
@@ -535,17 +595,6 @@
       "min": 1.58,
       "max": 2.79,
       "median": 2.02
-    },
-    "a.blob_mount_overhead": {
-      "run": "a-2026-10-09-attribution",
-      "label": "DERIVED",
-      "what": "median create with private Blob volume (24.25 s) minus median create with image only (2.31 s)",
-      "n": 1,
-      "unit": "s",
-      "values": [
-        21.94
-      ],
-      "value": 21.94
     },
     "a.attr.process_survived": {
       "run": "a-2026-10-09-attribution",
