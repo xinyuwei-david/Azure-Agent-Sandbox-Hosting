@@ -23,10 +23,9 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("question")
     args = ap.parse_args(argv)
-    m.EXECUTOR = "code-interpreter"
     try:
         endpoint, model = m.need_env("PROJECT_ENDPOINT"), m.need_env("ACA_MODEL")
-        host = m.load_hosts(None, m.load_sdk(m.EXECUTOR))["a"]
+        host = m.load_hosts(None, m.load_sdk())["a"]
     except m.SettingMissing as exc:
         print(f"SETTING MISSING {exc}", file=sys.stderr)
         return 2
@@ -42,7 +41,7 @@ def main(argv: list[str] | None = None) -> int:
         sbx = host.create()
         turn = m.ask(fd, version, conv, sbx, args.question)
         print(turn["response"])
-        print(f"sandbox {sbx.sandbox_id} ({m.EXECUTORS[m.EXECUTOR]}): {turn['tool_calls']} tool call(s), "
+        print(f"sandbox {sbx.sandbox_id} ({m.TEMPLATE}): {turn['tool_calls']} tool call(s), "
               f"{turn['sandbox_tool_s']} s in run_code, answer after {turn['wall_s']} s", file=sys.stderr)
         answered = True
     except Exception as exc:  # noqa: BLE001 - reported, then everything created is removed

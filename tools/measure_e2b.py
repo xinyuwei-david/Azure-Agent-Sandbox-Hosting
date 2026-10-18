@@ -7,6 +7,7 @@
     python tools/measure_e2b.py scale --hosts hosts.json --per-host 8
     python tools/measure_e2b.py hostloss --hosts hosts.json --lose a --stop-cmd "<command that stops host a>" \
         --start-cmd "<command that starts it again>"
+    python tools/measure_e2b.py host --bench 20 --reserve 4      # on the E2B host itself, no model
 
 Each run creates its own agent version (prompt agent, model ACA_MODEL, the one function tool below), runs the
 protocol, then deletes the version, every conversation and every sandbox it created. The instructions, tool schema
@@ -24,17 +25,23 @@ hostloss on every host: one live session (file written) and one paused sandbox. 
          named by --lose, and the tool records what each host can still do, including whether the lost host's
          paused sandbox can be resumed from another host. --start-cmd brings it back and the lost host's own paused
          sandbox is resumed again.
+host     no model or agent; run it on the E2B host. One sandbox reads its kernel, vCPUs and memory with run_code
+         while the host's Firecracker processes are listed. --bench n: n sandboxes in turn, each create -> cell
+         (x = 41) -> cell (x += 1) -> beta_pause -> wait 5 s -> Sandbox.connect -> cell (print(x) must give 42) ->
+         kill. --reserve k: sandboxes created one by one, each checked with a cell, /proc/meminfo read after each;
+         it stops at the first refused create, then kills them all.
 
 Hosts: without --hosts, one host from E2B_API_URL, E2B_SANDBOX_URL and E2B_API_KEY (each Embed install has its own
 key). --hosts names a JSON file {"a": {"api_url": ..., "sandbox_url": ..., "api_key_env": "ENV_NAME"}, ...}; keys
 are read from the named environment variables and never written to the output. Every SDK call passes that host's
 api_url, sandbox_url and api_key explicitly, so one process can drive several independent Embed installs.
 
-Executor (--executor) decides how the one tool runs the model's code; the agent, prompts and protocol are the same.
-code-interpreter (default): E2B's Code Interpreter SDK (e2b-code-interpreter), run_code on its code-interpreter-v1
-template, one cell in the sandbox's Jupyter kernel, so variables persist between calls and across pause and resume.
-commands: the 2026-10-14/15 runs, commands.run starting python3 for each call on the base template; only files
-persist. Both first record the question in /home/user/history.json; sandbox_tool_s times the whole call.
+The tool runs the model's code with E2B's Code Interpreter SDK (e2b-code-interpreter): run_code on its
+code-interpreter-v1 template, one cell in the sandbox's Jupyter kernel, so variables persist between calls and across
+pause and resume. Each call first records the question in /home/user/history.json; sandbox_tool_s times the whole
+call. --executor accepts only code-interpreter; it stays so that the recorded 2026-10-17 commands still run. The
+2026-10-14 and 2026-10-15 runs used the revision of commit 7c9a13b, which ran python3 with commands.run in the base
+template for every call.
 
 Clocks: time.perf_counter() in this process. create_total_s / sandbox_create_to_ready_s: Sandbox.create until it
 returns (Running). A turn's wall_s / agent_turn_s: first POST /openai/v1/responses until the final answer, including
@@ -43,7 +50,7 @@ sums (create or connect + turn). A perf cold record's wall_s is one stopwatch ar
 create + turn. An at-once session's turn1.wall_s is sandbox create + turn 1 (the 2026-10-14 driver's clock), and
 turn1.agent_turn_s is the turn alone. Pause, the 5 s wait and idle time are outside every resume clock.
 
-Reads PROJECT_ENDPOINT and ACA_MODEL. Foundry token: with FOUNDRY_TOKEN_SOURCE=imds, the VM's managed identity from
+Reads PROJECT_ENDPOINT and ACA_MODEL (not in host mode). Foundry token: with FOUNDRY_TOKEN_SOURCE=imds, the VM's managed identity from
 the instance metadata service (the identity needs the Foundry User role on the project); else FOUNDRY_BEARER_TOKEN if
 set; else `az account get-access-token --resource https://ai.azure.com`. The token is never printed. Writes
 evidence-local/e2b-<mode>-<UTC time>.json. Exit codes: 0 every requested phase passed, 1 a phase failed, lost state
@@ -104,8 +111,10 @@ LIVE_READ = "Use run_in_e2b_sandbox to read /home/user/live.txt. What is the cod
 PAUSE_WRITE = "Use run_in_e2b_sandbox to write PAUSED-{h} to /home/user/paused.txt. Reply only OK."
 PAUSE_READ = "Use run_in_e2b_sandbox to read /home/user/paused.txt. What does it say? Word only."
 RESUME_WAIT_S = 5
-EXECUTORS = {"code-interpreter": "code-interpreter-v1", "commands": "base"}
-EXECUTOR = "code-interpreter"
+EXECUTOR, TEMPLATE = "code-interpreter", "code-interpreter-v1"
+GUEST_PROBE = ("import os, platform\n"
+               "mem_kb = next(int(ln.split()[1]) for ln in open('/proc/meminfo') if ln.startswith('MemTotal:'))\n"
+               "print(platform.release(), os.cpu_count(), mem_kb // 1024)")
 
 
 class SettingMissing(RuntimeError):
@@ -151,11 +160,10 @@ def token() -> str:
     return out.stdout.strip()
 
 
-def load_sdk(executor: str = "commands"):
+def load_sdk():
     try:
-        from e2b import Sandbox, SandboxQuery, SandboxState
-        if executor == "code-interpreter":
-            from e2b_code_interpreter import Sandbox
+        from e2b import SandboxQuery, SandboxState
+        from e2b_code_interpreter import Sandbox
         return Sandbox, SandboxQuery, SandboxState
     except ImportError as exc:
         raise RuntimeError("Install the SDKs first: pip install e2b==2.56.0 e2b-code-interpreter==2.11.0") from exc
@@ -245,7 +253,7 @@ class Host:
         return {"api_url": self.api_url, "sandbox_url": self.sandbox_url, "api_key": self._key}
 
     def create(self):
-        return self.Sandbox.create(EXECUTORS[EXECUTOR], timeout=300, **self.opts())
+        return self.Sandbox.create(TEMPLATE, timeout=300, **self.opts())
 
     def connect(self, sandbox_id: str):
         return self.Sandbox.connect(sandbox_id, **self.opts())
@@ -287,30 +295,6 @@ def load_hosts(path: Path | None, sdk) -> dict[str, Host]:
     return hosts
 
 
-def sandbox_exec_python(sbx, code: str, question: str) -> dict:
-    wrapper = (
-        "import json, os, platform\n"
-        "p = '/home/user/history.json'\n"
-        "h = json.load(open(p)) if os.path.exists(p) else []\n"
-        "prior_count = len(h)\n"
-        f"h.append({{'turn': prior_count + 1, 'question': {question!r}}})\n"
-        "json.dump(h, open(p, 'w'))\n"
-        "ns = {'prior_questions': prior_count, 'history_length': len(h)}\n"
-        f"exec({code!r}, ns)\n"
-        "print('__STATE__=' + json.dumps({'prior_questions': prior_count, 'history_length': len(h), "
-        "'kernel': platform.release()}))\n"
-    )
-    t0 = time.perf_counter()
-    res = sbx.commands.run(f"python3 - <<'PY'\n{wrapper}\nPY", timeout=60)
-    elapsed = round(time.perf_counter() - t0, 3)
-    if getattr(res, "exit_code", 0) != 0:
-        raise RuntimeError(f"sandbox python exit {res.exit_code}: {getattr(res, 'stderr', '') or res.stdout}")
-    lines = [ln for ln in (res.stdout or "").strip().splitlines() if ln.strip()]
-    state_line = next((ln[len("__STATE__="):] for ln in reversed(lines) if ln.startswith("__STATE__=")), "{}")
-    return {"exec_s": elapsed, "stdout": "\n".join(ln for ln in lines if not ln.startswith("__STATE__=")).strip(),
-            "state": json.loads(state_line)}
-
-
 def sandbox_run_code(sbx, code: str, question: str) -> dict:
     """Code Interpreter: the same history step, then the model's code, as one cell in the sandbox's kernel."""
     cell = (
@@ -336,12 +320,6 @@ def sandbox_run_code(sbx, code: str, question: str) -> dict:
     return {"exec_s": elapsed, "stdout": "\n".join(out).strip(), "state": json.loads(state_line)}
 
 
-def run_tool(sbx, code: str, question: str) -> dict:
-    if EXECUTOR == "commands":
-        return sandbox_exec_python(sbx, code, question)
-    return sandbox_run_code(sbx, code, question)
-
-
 def extract_text(doc: dict) -> str:
     return " ".join(c["text"] for item in doc.get("output", []) or [] if item.get("type") == "message"
                     for c in item.get("content", []) or [] if c.get("type") in ("output_text", "text")
@@ -365,7 +343,7 @@ def ask(fd: Foundry, version: str, conv_id: str, sbx, question: str) -> dict:
         for call in fn_calls:
             calls += 1
             args = json.loads(call.get("arguments") or "{}")
-            info = run_tool(sbx, args.get("python_code", "print('ok')"), question)
+            info = sandbox_run_code(sbx, args.get("python_code", "print('ok')"), question)
             tool_s += info["exec_s"]
             state = info["state"]
             outputs.append({"type": "function_call_output", "call_id": call["call_id"], "output": json.dumps({
@@ -376,7 +354,7 @@ def ask(fd: Foundry, version: str, conv_id: str, sbx, question: str) -> dict:
                                                         "agent_reference": ref})
     if calls == 0:
         # The 2026-10-14 driver kept the sandbox history in step when the model answered without the tool.
-        info = run_tool(sbx, "print('fallback_sync')", question)
+        info = sandbox_run_code(sbx, "print('fallback_sync')", question)
         tool_s += info["exec_s"]
         state = info["state"]
     answer = extract_text(resp)
@@ -636,6 +614,113 @@ def hostloss(fd: Foundry, version: str, hosts: dict[str, Host], lose: str, stop_
     return out
 
 
+def meminfo(path: Path = Path("/proc/meminfo")) -> dict:
+    """This machine's hugepage pool (2 MiB pages) and available memory."""
+    vals = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        key, _, rest = line.partition(":")
+        vals[key] = int(rest.split()[0]) if rest.split() else 0
+    return {"hugepages_total": vals["HugePages_Total"], "hugepages_free": vals["HugePages_Free"],
+            "hugepages_rsvd": vals["HugePages_Rsvd"], "mem_available_mb": vals["MemAvailable"] // 1024}
+
+
+def vmm_processes(proc: Path = Path("/proc")) -> list[str]:
+    """Executable path of every Firecracker process visible here; empty unless run on the E2B host."""
+    found = []
+    for f in proc.glob("[0-9]*/cmdline"):
+        try:
+            argv0 = f.read_bytes().split(b"\0", 1)[0].decode("utf-8", errors="replace")
+        except OSError:
+            continue
+        if argv0.rsplit("/", 1)[-1] == "firecracker":
+            found.append(argv0)
+    return sorted(found)
+
+
+def run_cell(sbx, code: str) -> str:
+    ex = sbx.run_code(code, timeout=60)
+    if ex.error is not None:
+        raise RuntimeError(f"sandbox kernel {ex.error.name}: {ex.error.value}")
+    return ("".join(ex.logs.stdout) + (ex.text or "")).strip()
+
+
+def isolation(host: Host) -> dict:
+    out: dict = {"host_kernel": os.uname().release}
+    sbx = None
+    try:
+        sbx = host.create()
+        kernel, cpus, mem_mb = run_cell(sbx, GUEST_PROBE).split()
+        out.update(guest_kernel=kernel, guest_cpus=int(cpus), guest_mem_total_mb=int(mem_mb))
+        info = sbx.get_info()
+        out["sandbox_info"] = {"template_name": info.name, "cpu_count": info.cpu_count, "memory_mb": info.memory_mb}
+        out["vmm_processes"] = vmm_processes()
+        if not out["vmm_processes"]:
+            out["vmm_note"] = "no Firecracker process visible: run host mode on the E2B host"
+    except Exception as exc:  # noqa: BLE001 - recorded
+        out["error"] = f"{type(exc).__name__}: {exc}"
+    finally:
+        out["sandbox_deleted"] = kill(sbx)
+    return out
+
+
+def bench_once(host: Host, i: int) -> dict:
+    rec: dict = {"i": i}
+    sbx = None
+    try:
+        t0 = time.perf_counter()
+        sbx = host.create()
+        rec["create_s"] = round(time.perf_counter() - t0, 4)
+        t1 = time.perf_counter()
+        run_cell(sbx, "x = 41")
+        rec["first_cell_s"] = round(time.perf_counter() - t1, 4)
+        t2 = time.perf_counter()
+        run_cell(sbx, "x += 1")
+        rec["warm_cell_s"] = round(time.perf_counter() - t2, 4)
+        t3 = time.perf_counter()
+        sbx.beta_pause()
+        rec["pause_s"] = round(time.perf_counter() - t3, 4)
+        time.sleep(RESUME_WAIT_S)
+        t4 = time.perf_counter()
+        sbx = host.connect(sbx.sandbox_id)
+        rec["resume_s"] = round(time.perf_counter() - t4, 4)
+        t5 = time.perf_counter()
+        after = run_cell(sbx, "print(x)")
+        rec["cell_after_resume_s"] = round(time.perf_counter() - t5, 4)
+        rec["state_kept"] = after == "42"
+        if not rec["state_kept"]:
+            raise RuntimeError(f"x after resume is {after!r}, not '42'")
+    except Exception as exc:  # noqa: BLE001 - recorded; cleanup still runs
+        rec["error"] = f"{type(exc).__name__}: {exc}"
+    finally:
+        rec["sandbox_deleted"] = kill(sbx)
+    return rec
+
+
+def reservation(host: Host, k: int) -> dict:
+    out: dict = {"before": meminfo(), "steps": []}
+    live = []
+    try:
+        for i in range(1, k + 1):
+            t0 = time.perf_counter()
+            try:
+                sbx = host.create()
+            except Exception as exc:  # noqa: BLE001 - a refused create ends the probe; it is the observation
+                out["refused"] = {"at": i, "seconds": round(time.perf_counter() - t0, 3),
+                                  "message": f"{type(exc).__name__}: {str(exc)[:300]}"}
+                break
+            live.append(sbx)
+            seconds = round(time.perf_counter() - t0, 3)
+            out["steps"].append({"sandboxes": i, "create_s": seconds, "check_ok": run_cell(sbx, "print(1 + 1)") == "2",
+                                 **meminfo()})
+    except Exception as exc:  # noqa: BLE001 - recorded; cleanup still runs
+        out["error"] = f"{type(exc).__name__}: {exc}"
+    finally:
+        out["sandboxes_deleted"] = all([kill(s) for s in live])
+        time.sleep(5)  # pages return to the pool once the Firecracker processes have exited
+        out["after"] = meminfo()
+    return out
+
+
 def leftovers(hosts: dict[str, Host]) -> dict:
     out = {}
     for h in hosts.values():
@@ -665,6 +750,11 @@ def failed(doc: dict) -> bool:
             or (rec is not None and not (rec.get("followup_on_live_session") or {}).get("state_preserved"))
     if doc["mode"] == "scale":
         return bad(doc) or doc["at_once"]["answered"] != doc["at_once"]["sessions_at_once"]
+    if doc["mode"] == "host":
+        res = doc.get("reservation")
+        return bad(doc) or "guest_kernel" not in doc["isolation"] \
+            or not all(r.get("state_kept") for r in doc["bench"]["runs"]) \
+            or (res is not None and not (res["steps"] and all(s["check_ok"] for s in res["steps"])))
     # after_loss and after_restart also hold the failures the stop is expected to cause (the stopped host's create and
     # connects, its running sandbox, another host connecting its paused sandbox); bad() skips them, and only what
     # must survive is required below.
@@ -691,14 +781,19 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     for name, text in (("agent", "the 3-run create/answer/pause/resume protocol"),
                        ("perf", "cold, warm, at-once and sandbox replacement on one host"),
                        ("scale", "sessions at the same time across every host in --hosts"),
-                       ("hostloss", "stop one host and record what the others and the paused sandboxes can do")):
+                       ("hostloss", "stop one host and record what the others and the paused sandboxes can do"),
+                       ("host", "on the E2B host, no model: VMM and guest read-back, microbenchmark, hugepages")):
         p = sub.add_parser(name, help=text)
         p.add_argument("--hosts", type=Path, help="JSON file naming several Embed installs (see the module help)")
         p.add_argument("--out-dir", type=Path, default=ROOT / "evidence-local")
-        p.add_argument("--executor", choices=sorted(EXECUTORS), default="code-interpreter",
-                       help="how the tool runs the model's code (default code-interpreter; see the module help)")
-        if name in ("agent", "perf"):
+        p.add_argument("--executor", choices=[EXECUTOR], default=EXECUTOR,
+                       help="how the tool runs the model's code; only code-interpreter (see the module help)")
+        if name in ("agent", "perf", "host"):
             p.add_argument("--host", help="host name from --hosts to run on (default: the first)")
+        if name == "host":
+            p.add_argument("--bench", type=int, default=20, help="sandboxes in the microbenchmark (default 20)")
+            p.add_argument("--reserve", type=int, default=0,
+                           help="create up to this many sandboxes, reading /proc/meminfo after each (default 0: skip)")
         if name == "agent":
             p.add_argument("--runs", type=int, default=3)
         if name == "perf":
@@ -715,6 +810,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     for key in ("runs", "cold", "per_host"):
         if getattr(args, key, 1) < 1:
             ap.error(f"--{key.replace('_', '-')} must be >= 1")
+    for key in ("bench", "reserve"):
+        if getattr(args, key, 0) < 0:
+            ap.error(f"--{key} must be >= 0")
     if args.mode == "perf":
         try:
             args.levels = [int(x) for x in args.scale.split(",") if x.strip()]
@@ -727,13 +825,30 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return args
 
 
-def main(argv: list[str] | None = None) -> int:
-    global EXECUTOR
-    args = parse_args(argv)
-    EXECUTOR = args.executor
+def host_main(args: argparse.Namespace, doc: dict, hosts: dict[str, Host], host: Host, out_path: Path) -> int:
     try:
-        endpoint, model = need_env("PROJECT_ENDPOINT"), need_env("ACA_MODEL")
-        sdk = load_sdk(EXECUTOR)
+        doc["isolation"] = isolation(host)
+        doc["bench"] = {"resume_wait_s": RESUME_WAIT_S, "runs": [bench_once(host, i + 1) for i in range(args.bench)]}
+        if args.reserve:
+            doc["reservation"] = reservation(host, args.reserve)
+    except Exception as exc:  # noqa: BLE001 - recorded in the output file
+        doc["error"] = f"{type(exc).__name__}: {exc}"
+    finally:
+        doc["leftover_sandboxes"] = leftovers({n: h for n, h in hosts.items() if h.health() == 200})
+        doc["finished_at"] = now_iso()
+        out_path.write_text(json.dumps(doc, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    print(f"E2B {args.mode} -> {out_path}")
+    left_ok = all(v == 0 for v in doc["leftover_sandboxes"].values())
+    return 1 if "error" in doc or not left_ok or failed(doc) else 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+    try:
+        endpoint = model = None
+        if args.mode != "host":
+            endpoint, model = need_env("PROJECT_ENDPOINT"), need_env("ACA_MODEL")
+        sdk = load_sdk()
         hosts = load_hosts(args.hosts, sdk)
         pick = getattr(args, "host", None) or next(iter(hosts))
         if pick not in hosts or (args.mode == "hostloss" and args.lose not in hosts):
@@ -746,14 +861,15 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     args.out_dir.mkdir(parents=True, exist_ok=True)
     out_path = args.out_dir / f"e2b-{args.mode}-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}.json"
-    doc: dict = {"mode": args.mode, "started_at": now_iso(), "model": model, "executor": EXECUTOR,
-                 "template": EXECUTORS[EXECUTOR], "sdk": sdk_versions(),
-                 "tool_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
-                 "agent": {"name": AGENT_NAME, "instructions": INSTRUCTIONS, "tools": TOOLS_SPEC},
-                 "hosts": {n: {"api_url": h.api_url, "sandbox_url": h.sandbox_url} for n, h in hosts.items()},
-                 "inputs": {"first": FIRST_Q, "count": COUNT_Q, "cold": COLD_Q, "warm": WARM_QS,
-                            "scale": [SCALE_WRITE, SCALE_READ], "live": [LIVE_WRITE, LIVE_READ],
-                            "paused": [PAUSE_WRITE, PAUSE_READ], "resume_wait_s": RESUME_WAIT_S}}
+    doc: dict = {"mode": args.mode, "started_at": now_iso(), "executor": EXECUTOR, "template": TEMPLATE,
+                 "sdk": sdk_versions(), "tool_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+                 "hosts": {n: {"api_url": h.api_url, "sandbox_url": h.sandbox_url} for n, h in hosts.items()}}
+    if args.mode == "host":
+        return host_main(args, doc, hosts, hosts[pick], out_path)
+    doc.update(model=model, agent={"name": AGENT_NAME, "instructions": INSTRUCTIONS, "tools": TOOLS_SPEC},
+               inputs={"first": FIRST_Q, "count": COUNT_Q, "cold": COLD_Q, "warm": WARM_QS,
+                       "scale": [SCALE_WRITE, SCALE_READ], "live": [LIVE_WRITE, LIVE_READ],
+                       "paused": [PAUSE_WRITE, PAUSE_READ], "resume_wait_s": RESUME_WAIT_S})
     fd, version = None, None
     try:
         fd = Foundry(endpoint, token())

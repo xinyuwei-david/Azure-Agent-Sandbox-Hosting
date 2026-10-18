@@ -12,7 +12,7 @@ The narrative is organized around two questions: who runs the session lifecycle,
 - **B · Foundry hosted agent.** `azd ai agent init` binds the workshop's `azure.yaml` to the existing project and `azd deploy` builds and publishes a version. Learn describes per-session VM-isolated sandboxes, `$HOME` and `/files` persisted across idle, an idle timeout of 2–60 minutes (default 15) and deletion after 30 days of inactivity.
 - **C · AKS + agent-sandbox.** AKS with Workload Identity and the Blob CSI driver, an Azure Linux node pool with `KataVmIsolation` (`Standard_D4s_v3` in our run), agent-sandbox `v0.5.2` (`agents.x-k8s.io/v1beta1`, kind `Sandbox`), a Blob PVC for state and a LoadBalancer restricted to one source address. Suspend and resume are `spec.operatingMode: Suspended | Running`; the pod is deleted and file state is restored from Blob, not from a memory snapshot. Learn names the stack: Azure Linux host, Microsoft Hyper-V, Cloud Hypervisor VMM, Kata Containers.
 - **D · BYO-AKS.** The initial one-Kata-node read-back had 13 runtime pods in `foundry-system`: 9 fixed Deployment replicas (router ×3 behind a LoadBalancer on `:443`, controller ×2, identity proxy ×2, telemetry controller ×2) plus 4 DaemonSets. Each DaemonSet adds one pod per matching Kata node, so the total grows with the node pool. Each session is its own Deployment, ReplicaSet and pod with `runtimeClassName: kata-vm-isolation` in a per-project namespace.
-- **E · E2B on Azure VM.** An Ubuntu 24.04 LTS Gen2 VM (`Standard_D4ds_v7` with nested virtualization `/dev/kvm`) runs the open-source E2B Embed Docker Compose stack (`e2b-dev/runtime` at `588e5b9`). In the comparison, E2B's Code Interpreter `Sandbox.create()` boots a `code-interpreter-v1` Firecracker `v1.14-0.2.0` micro-VM (2 vCPU, 2048 MB, guest kernel `6.1.177+`) and the tool runs the model's Python with `run_code` in its Jupyter kernel; the runs before 2026-10-17 used `Sandbox.create("base")` (2 vCPU, 512 MB) and `commands.run("python3")`. `beta_pause` snapshots memory and disk (`vm_state` + `mem_file`) to the VM's OS disk, where E2B also keeps its templates, and `Sandbox.connect` restores it. A Foundry Prompt Agent (`gpt-5.4-mini`) calls the sandbox via a function tool over ports `3000` and `3002`. Embed is [one machine by design](https://github.com/e2b-dev/runtime/blob/588e5b9500b0987bc5a700d91483b03f0ae7d2a2/embed/README.md#when-one-node-is-not-enough), answers over plain HTTP, and has no persistent data volume; `e-2026-10-15-multi` runs two independent installs side by side.
+- **E · E2B on Azure VM.** An Ubuntu 24.04 LTS Gen2 VM (`Standard_D4ds_v7`, or the `Standard_D8ds_v7` of `e-2026-10-18-ci-scale`, with nested virtualization `/dev/kvm`) runs the open-source E2B Embed Docker Compose stack (`e2b-dev/runtime` at `588e5b9`). In the comparison, E2B's Code Interpreter `Sandbox.create()` boots a `code-interpreter-v1` Firecracker `v1.14-0.2.0` micro-VM (2 vCPU, 2048 MB, guest kernel `6.1.177+`) and the tool runs the model's Python with `run_code` in its Jupyter kernel; the runs before 2026-10-17 used `Sandbox.create("base")` (2 vCPU, 512 MB) and `commands.run("python3")`, and the runs of 2026-10-17 and 2026-10-18 supersede them. `beta_pause` snapshots memory and disk (`vm_state` + `mem_file`) to the VM's OS disk, where E2B also keeps its templates, and `Sandbox.connect` restores it. A Foundry Prompt Agent (`gpt-5.4-mini`) calls the sandbox via a function tool over ports `3000` and `3002`. Embed is [one machine by design](https://github.com/e2b-dev/runtime/blob/588e5b9500b0987bc5a700d91483b03f0ae7d2a2/embed/README.md#when-one-node-is-not-enough), answers over plain HTTP, and has no persistent data volume; `e-2026-10-18-ci-multi` runs two independent installs side by side, as `e-2026-10-15-multi` did with `base`.
 
 Why these clocks:
 
@@ -31,6 +31,7 @@ Why these clocks:
 | Cold, E D protocol | conversation create | the turn's final answer, with `Sandbox.create` in between (one stopwatch) | as above |
 | Resume, E (component sum) | `Sandbox.connect` → it returns | add the first turn after it | as above |
 | Pause, E | `beta_pause` | it returns | as above |
+| Host mode, E (2026-10-18) | `Sandbox.create`, a `run_code` cell, `beta_pause` or `Sandbox.connect` | it returns | the tool on the E2B host itself, no model |
 
 E's clocks and those of `b-2026-10-15-sessions` and of every 2026-10-18 run are `time.perf_counter()` in the measuring process; a range is the minimum to the maximum. A, E and C's 2026-10-18 runs wait 5 s between the end of stop, pause or suspend and the start of resume, outside every clock. The E concurrency tables give sandbox create plus turn 1, the clock of the 2026-10-14 driver.
 
@@ -57,7 +58,7 @@ A's cold is `create_total_s + first.guest_s` and resume-to-answer is `resume_tot
 
 [`tools/check_isolation.py`](tools/check_isolation.py) (C and D) reads `kubectl get pods` and `kubectl get nodes`, requires `runtimeClassName: kata-vm-isolation` and phase Running, and with `--exec-uname` compares `uname -r` inside the pod with the node's `kernelVersion`.
 
-[`tools/measure_e2b.py`](tools/measure_e2b.py) (E) creates its own Prompt Agent version (the instructions and tool schema printed in every output), runs the A-matched 3-run `agent` protocol (`Sandbox.create` → first answer → follow-up → `beta_pause` → wait 5 s → `Sandbox.connect` → follow-ups → `kill`), the D-matched `perf` protocol (cold n=5, warm follow-ups with `LANTERN-7`, concurrency 4 and 8, and sandbox replacement), `scale` (sessions spread over several Embed installs named in `--hosts`) and `hostloss` (stop one install's stack and record what the others and the paused sandboxes can do), then deletes the agent version, every conversation and every sandbox. Exit 1 if any phase failed, lost state or left a resource. The 2026-10-15 runs used its revision `036dc81…`, except host b's agent runs, which used the earlier `89255d0b…`. The repository revision changes only failure handling and keeps the prompts, protocol and clocks: exit 1 when the recovery follow-up loses the code word, or when `hostloss` loses what should survive (the other host's live session and new sessions, the stopped host's paused sandbox and new sessions after restart) or leaves a sandbox or conversation; cleanup when a create fails midway; exit 2 for an unreadable `--hosts` file. The 2026-10-14 numbers came from the author's private driver, whose agent, prompts and clocks it reproduces. `--executor` chooses how the tool runs the model's Python: `code-interpreter` (the default, used on 2026-10-17 with revision `cbc96f2…`) creates the sandbox with `e2b-code-interpreter` in `code-interpreter-v1` and runs one `run_code` cell per tool call; `commands`, the method of every earlier E run, creates it in `base` and runs `python3` with `commands.run`. Each output records the executor, the template and the SDK versions.
+[`tools/measure_e2b.py`](tools/measure_e2b.py) (E) creates its own Prompt Agent version (the instructions and tool schema printed in every output), runs the A-matched 3-run `agent` protocol (`Sandbox.create` → first answer → follow-up → `beta_pause` → wait 5 s → `Sandbox.connect` → follow-ups → `kill`), the D-matched `perf` protocol (cold n=5, warm follow-ups with `LANTERN-7`, concurrency 4 and 8, and sandbox replacement), `scale` (sessions spread over several Embed installs named in `--hosts`) and `hostloss` (stop one install's stack and record what the others and the paused sandboxes can do), then deletes the agent version, every conversation and every sandbox. Exit 1 if any phase failed, lost state or left a resource. The 2026-10-15 runs used its revision `036dc81…`, except host b's agent runs, which used the earlier `89255d0b…`. The repository revision changes only failure handling and keeps the prompts, protocol and clocks: exit 1 when the recovery follow-up loses the code word, or when `hostloss` loses what should survive (the other host's live session and new sessions, the stopped host's paused sandbox and new sessions after restart) or leaves a sandbox or conversation; cleanup when a create fails midway; exit 2 for an unreadable `--hosts` file. The 2026-10-14 numbers came from the author's private driver, whose agent, prompts and clocks it reproduces. The tool runs the model's Python only with E2B's Code Interpreter: it creates the sandbox with `e2b-code-interpreter` in `code-interpreter-v1` and runs one `run_code` cell per tool call (revision `cbc96f2…` on 2026-10-17, `aca40d1…` on 2026-10-18); `--executor` accepts only `code-interpreter`, so the recorded 2026-10-17 commands still run. Every E run before 2026-10-17 ran the model's Python as `python3` with `commands.run` in a `base` sandbox (the tool's method up to commit `7c9a13b`); those runs are superseded. `host` mode runs on the E2B host without a model: one sandbox reads its kernel, vCPUs and memory while the tool lists the host's Firecracker processes; `--bench n` times n create → cell → pause → resume → cell cycles; `--reserve k` creates up to k sandboxes one by one and reads `/proc/meminfo` after each until a create is refused (`e-2026-10-18-ci-host`, `e-2026-10-18-ci-scale`). Each output records the executor, the template and the SDK versions.
 
 [`tools/e2b_agent.py`](tools/e2b_agent.py) (E) is README step 7's application call: it creates a temporary Prompt Agent version with the same tool, one conversation and one `code-interpreter-v1` sandbox, sends one question, runs every tool call with `run_code`, prints the answer, and deletes the sandbox, the conversation and the agent version. Exit 0 answered and cleaned up, 1 a failure or a resource left, 2 a missing setting; on 2026-10-17 it answered on host c and left nothing.
 
@@ -71,7 +72,7 @@ The workshop scripts (`module-01/setup.sh`, `module-03/prepare-agent-sandbox.sh`
 
 ## Measured Runs
 
-All runs used Azure resources in East US 2. The client was a Windows workstation, except `b-2026-10-15-sessions` and the 2026-10-18 runs (a Windows VM in Japan East, from WSL Ubuntu) and E, whose tools ran on the E2B host VM (host a on 2026-10-15, host c on 2026-10-17). The A/B/C record names Azure CLI 2.88.0 and azd 1.34.1; A's SDK record also names Python 3.13. Raw consoles and IDs stay in the author's private folders; [`tools/export_evidence.py`](tools/export_evidence.py) projected them into [`evidence/runs/`](evidence/runs/), recording the SHA-256 of every private source, and replaced node, pod and namespace names with neutral labels. The 2026-10-18 records were projected the same way by a private script whose SHA-256 each record lists.
+All runs used Azure resources in East US 2. The client was a Windows workstation, except `b-2026-10-15-sessions` and the 2026-10-18 runs (a Windows VM in Japan East, from WSL Ubuntu) and E, whose tools ran on the E2B host VM (host a on 2026-10-15, host c on 2026-10-17, hosts c, a and d on 2026-10-18). The A/B/C record names Azure CLI 2.88.0 and azd 1.34.1; A's SDK record also names Python 3.13. Raw consoles and IDs stay in the author's private folders; [`tools/export_evidence.py`](tools/export_evidence.py) projected them into [`evidence/runs/`](evidence/runs/), recording the SHA-256 of every private source, and replaced node, pod and namespace names with neutral labels. The 2026-10-18 records were projected the same way by a private script whose SHA-256 each record lists.
 
 Runs are grouped A–E, then by date from oldest to newest within each path, matching the README tables.
 
@@ -673,6 +674,7 @@ On-host 20-sandbox microbenchmark (zero WAN RTT): create 0.051–0.089 s (n=20),
 The VMM process behind the sandboxes in the host's process list was <!--v:e.vmm.value-->firecracker<!--/v-->, and the conversation history inside the sandbox grew across pause and resume in <!--v:e.state_kept.count-->3<!--/v--> of 3. Initial VM setup took <!--v:e.setup.value-->177<!--/v--> s.
 
 **Boundary.**
+- Superseded: this run used the earlier executor (`base` template, `python3` through `commands.run`); `e-2026-10-17-ci-agent` and `e-2026-10-18-ci-multi` repeat the agent runs, and `e-2026-10-18-ci-host` the on-host cycles, with `code-interpreter-v1`.
 - Three agent runs plus 20 on-host microbenchmark iterations on one `Standard_D4ds_v7` VM in East US 2.
 - The Prompt Agent runs in Foundry and calls the E2B sandbox as a function tool over the network, whereas A's reflection agent ran inside the ACA sandbox itself.
 
@@ -730,6 +732,7 @@ Sandbox replacement after `kill`: new Firecracker sandbox Ready in 0.1 s; follow
 <!-- END GENERATED: e-scale -->
 
 **Boundary.**
+- Superseded: this run used the earlier executor (`base` template, `python3` through `commands.run`); `e-2026-10-17-ci-perf` and `e-2026-10-18-ci-scale` repeat the protocol with `code-interpreter-v1`.
 - Single-VM deployment (`Standard_D4ds_v7`, 4 vCPU / 16 GiB RAM). At concurrency 8, one follow-up turn (`SCALE-8`) took 78.99 s while all 8/8 sessions answered and remembered their code words; the record does not say where that time went.
 - Like D's recovery run, the follow-up after `kill` went to a different live session (`LANTERN-7`): the host kept serving and the replacement sandbox was ready in <!--v:e.pod_lost.value-->0.1<!--/v--> s. It does not show continuity of the killed sandbox.
 - The numbers came from the author's private driver; `tools/measure_e2b.py perf` reproduces its agent, prompts and clocks but was not the program that produced this record.
@@ -795,6 +798,7 @@ Why JavaScript failed, reproduced in new sandboxes: JavaScript as the first cell
 <!-- END GENERATED: e-latest-ci -->
 
 **Boundary.**
+- Superseded for the SDK check: it used the earlier executor (`base` template, `python3` through `commands.run`); `e-2026-10-17-ci-agent` and `e-2026-10-18-ci-multi` run the same protocol with `code-interpreter-v1`. The template build and the code-interpreter checks stand.
 - With Embed's defaults the official template does not build: the hugepage pool, the build workspace and the 50 GB OS disk each stopped an attempt. The build workspace was raised by adding one row to Embed's internal `project_limits` table, which E2B does not document; a run with that change shows the template working, not a supported configuration.
 - The build disk need is from this one build: attempt 4 reused attempt 3's cache for steps 1–11, so a clean build would need about the sum of both, which was not measured.
 - Each `code-interpreter-v1` sandbox is 2048 MB, four times `base`; how many fit on one host was not measured here (`e-2026-10-17-ci-perf` measured it on host c).
@@ -874,6 +878,7 @@ Stopping host a's E2B stack with `docker compose stop` (the VM kept running):
 <!-- END GENERATED: e-multi-hostloss -->
 
 **Boundary.**
+- Superseded: this run used the earlier executor (`base` template, `python3` through `commands.run`); `e-2026-10-18-ci-multi` repeats the agent runs, the at-once phases and the host stop with `code-interpreter-v1`, and `e-2026-10-18-ci-host` measures the hugepages each `code-interpreter-v1` sandbox takes.
 - Two independent installs and a client that spreads sessions over them, not an E2B cluster: there is no shared scheduler, no failover and no shared storage. The sessions per host add up; a paused sandbox can only resume on the host that paused it.
 - The host stop was `docker compose stop` on a running VM. A lost VM or disk, and the official Terraform module's scale-set replacement from a fresh disk, were not measured.
 - The two hosts were not identical: host a booted kernel `7.0.0-1017-azure` after its overnight deallocation and its OS disk had been changed from Premium SSD to Standard HDD by a subscription policy after the 2026-10-14 runs; host b ran `6.17.0-1022-azure` on Premium SSD.
@@ -924,7 +929,7 @@ All three attempts ran with the settings that let host a build on 2026-10-15: `H
 
 **Boundary.**
 - 3 runs on one host. The tool ran on the host itself (`localhost`), so no network between client and Embed is in these numbers. Compare with the SDK check of `e-2026-10-15-latest` as a field report: the host, its disk and the template differ, not only the executor.
-- Resume took <!--v:e.ci.resume.median-->0.64<!--/v--> s median here against <!--v:e.latest.sdk.resume.median-->0.08<!--/v--> s for `base` on host a. The 2 GiB sandbox has four times `base`'s memory and the hosts differ; this run does not separate the two.
+- Resume took <!--v:e.ci.resume.median-->0.64<!--/v--> s median here against <!--v:e.latest.sdk.resume.median-->0.08<!--/v--> s for `base` on host a. The 2 GiB sandbox has four times `base`'s memory and the hosts differ; this run does not separate the two. `e-2026-10-18-ci-multi` ran this protocol with `code-interpreter-v1` on host a: resume <!--v:e.m.a.resume.median-->0.39<!--/v--> s median (<!--v:e.m.a.resume.range-->0.38–1.46<!--/v--> s), between the two: on host a the 2 GiB template resumed more slowly than `base`, and on host c more slowly than on host a; one run each, on different days.
 - The successful build reused steps 1–19 of the failed attempt 2, so its 92 s is not a clean build time; host a's 426 s in `e-2026-10-15-latest` also reused steps 1–11.
 - The `project_limits` row is an undocumented change to Embed's internal table, as in `e-2026-10-15-latest`; that it takes effect only after a delay is inferred from two attempts, not measured.
 - The step 20 failure (`error setting fc metrics`) did not recur after the VM restart; its cause was not found.
@@ -992,9 +997,238 @@ Each count is the free pages divided by the template's pages, rounded down: with
 - The pages each sandbox takes are inferred from the counts and the template memory; `HugePages_Rsvd` was not recorded.
 - As in `e-2026-10-14-perf`, the follow-up after `kill` went to a different live session; it does not show continuity of the killed sandbox.
 
+### e-2026-10-18-ci-host: code-interpreter-v1 on host c with no model, 20 pause and resume cycles and the hugepages per sandbox
+
+**Question.** Without a model in the way, how long do create, a cell, pause and resume take for a 2 GiB `code-interpreter-v1` sandbox when 20 run one after another, does the kernel's state come back after each pause, and how many hugepages does one sandbox take, which sets how many fit on a host?
+
+**Input.** The tool's `host` mode on host c ([`evidence/runs/e-e2b-2026-10-18/ci-host.json`](evidence/runs/e-e2b-2026-10-18/ci-host.json)):
+
+<!-- BEGIN GENERATED: e-host-input -->
+> Host c: `Standard_D4ds_v7` (4 vCPU, 16 GiB), zone `2`, OS disk `Standard HDD (Standard_LRS) · 128 GB`, `HUGEPAGES=4096`; the install of `e-2026-10-17-ci-agent`, where `code-interpreter-v1` was built.
+> Tool: `tools/measure_e2b.py` (SHA-256 `aca40d17e315…`), `measure_e2b.py host --bench 20 --reserve 4` on host c itself against `localhost`; no model and no agent; E2B Code Interpreter only (`e2b 2.56.0`, `e2b-code-interpreter 2.11.0`, template `code-interpreter-v1`, 2 vCPU, 2048 MB).
+> Read-back: one sandbox runs the cell `import os, platform; mem_kb = next(int(ln.split()[1]) for ln in open('/proc/meminfo') if ln.startswith('MemTotal:')); print(platform.release(), os.cpu_count(), mem_kb // 1024)` while the tool lists the host's Firecracker processes from `/proc/*/cmdline`.
+> Cycles: 20 sandboxes one after another, each `Sandbox.create` → cell `x = 41` → cell `x += 1` → `beta_pause` → wait 5 s → `Sandbox.connect` → cell `print(x)`, which must print `42` → `kill`.
+> Reservation: sandboxes created one by one and kept, each checked with `print(1 + 1)`; `/proc/meminfo` read before the first and after each, until a create was refused; then every sandbox killed and `/proc/meminfo` read again 5 s later.
+<!-- END GENERATED: e-host-input -->
+
+**Varied and fixed.** Fixed: host c, its install, pool and template, the SDKs and the tool; no model, no agent and no network between the tool and E2B. Varied: the cycle, and in the reservation the number of sandboxes kept at once.
+
+**Result.** The 20 cycles:
+
+<!-- BEGIN GENERATED: e-host-bench -->
+| Cycle | Create | First cell | Next cell | Pause | Resume | Cell after resume | `x` after resume |
+|---:|---:|---:|---:|---:|---:|---:|---|
+| 1 | 0.088 | 0.091 | 0.009 | 0.14 | 0.55 | 0.08 | 42 |
+| 2 | 0.099 | 0.1 | 0.009 | 2.99 | 0.38 | 0.074 | 42 |
+| 3 | 0.091 | 0.1 | 0.011 | 0.53 | 0.4 | 0.082 | 42 |
+| 4 | 0.098 | 0.17 | 0.043 | 3.07 | 5.31 | 0.13 | 42 |
+| 5 | 0.12 | 0.095 | 0.011 | 0.87 | 6.3 | 0.05 | 42 |
+| 6 | 0.26 | 0.17 | 0.048 | 0.62 | 6.4 | 0.044 | 42 |
+| 7 | 0.12 | 0.11 | 0.018 | 3.15 | 4.84 | 0.071 | 42 |
+| 8 | 0.56 | 0.08 | 0.008 | 1.07 | 5.54 | 0.062 | 42 |
+| 9 | 0.48 | 0.1 | 0.008 | 0.66 | 7.33 | 0.11 | 42 |
+| 10 | 0.17 | 0.14 | 0.011 | 1.48 | 5.38 | 0.067 | 42 |
+| 11 | 0.13 | 0.095 | 0.009 | 0.67 | 10.24 | 0.058 | 42 |
+| 12 | 0.3 | 0.11 | 0.008 | 1.8 | 4.68 | 0.066 | 42 |
+| 13 | 0.18 | 0.12 | 0.009 | 1.36 | 5.91 | 0.17 | 42 |
+| 14 | 0.24 | 0.094 | 0.024 | 1.85 | 4.99 | 0.13 | 42 |
+| 15 | 0.14 | 0.12 | 0.018 | 3.27 | 3.84 | 0.15 | 42 |
+| 16 | 0.27 | 0.19 | 0.01 | 2.03 | 4.7 | 0.05 | 42 |
+| 17 | 0.29 | 0.17 | 0.008 | 0.56 | 8.08 | 0.065 | 42 |
+| 18 | 0.38 | 0.1 | 0.009 | 1.47 | 4.91 | 0.12 | 42 |
+| 19 | 0.11 | 0.13 | 0.031 | 1.74 | 6.16 | 0.21 | 42 |
+| 20 | 0.14 | 0.18 | 0.025 | 3.06 | 4.61 | 0.071 | 42 |
+
+Seconds. Over the 20 cycles: create 0.088–0.56 s (n=20), 4 of 20 under 0.1 s; first cell 0.08–0.19 s (n=20); next cell 0.008–0.048 s (n=20); pause 0.14–3.27 s (n=20), 13 of 20 over 1 s; resume 0.38–10.24 s (n=20): the first 3 cycles at most 0.55 s, every later one 3.84–10.24 s; cell after resume 0.044–0.21 s (n=20). `print(x)` printed 42 in 20 of 20 cycles: the kernel's variable came back with the memory snapshot. No sandbox was left.
+<!-- END GENERATED: e-host-bench -->
+
+Hugepages taken as sandboxes were added:
+
+<!-- BEGIN GENERATED: e-host-reserve -->
+| Sandboxes | Create, s | `HugePages_Free` | `HugePages_Rsvd` | Pages taken | MemAvailable, MiB |
+|---|---:|---:|---:|---:|---:|
+| 0 (before) |  | 4083 | 62 | 75 | 5634 |
+| 1 | 0.22 | 3815 | 818 | 1099 | 5628 |
+| 2 | 0.14 | 3522 | 1549 | 2123 | 5623 |
+| 3 | 0.08 | 3251 | 2302 | 3147 | 5631 |
+| 4: refused | 0.217 |  |  |  |  |
+| 0 (all killed) |  | 4083 | 62 | 75 | 5680 |
+
+Pages taken = `HugePages_Total` (4096) − free + reserved; pages are 2 MiB. Each sandbox took 1024 pages, its whole 2048 MiB, as soon as it was created; 75 pages were taken by other processes on host c. With 3 sandboxes, 4096 − 75 − 3 × 1024 = 949 pages were left, fewer than one sandbox needs, and create 4 got `500: Failed to place sandbox` in 0.217 s. MemAvailable stayed at 5623–5634 MiB: the pool is set aside at boot, so sandbox memory does not show there.
+
+Read-back: Firecracker `v1.14-0.2.0` behind the sandbox in the host's process list; inside it kernel `6.1.177+`, 2 vCPU and MemTotal 1982 MiB for the template's 2048 MB; host kernel `7.0.0-1017-azure`.
+<!-- END GENERATED: e-host-reserve -->
+
+**Boundary.**
+- One host and one run of each probe; the tool ran on host c itself, so these are the E2B calls alone, not agent turns.
+- The jump in resume time after the first cycles is recorded, not explained. Disk activity was not recorded; E2B writes each pause snapshot (`vm_state` + `mem_file`) to the host's OS disk, a Standard HDD on host c, so a busy disk is a candidate cause that this run does not test.
+- The cycles ran back to back with only the 5 s wait before each resume; in the agent runs, model turns of several seconds separate one pause from the next, and resume took <!--v:e.ci.resume.range-->0.63–1.43<!--/v--> s on host c (`e-2026-10-17-ci-agent`) and <!--v:e.m.a.resume.range-->0.38–1.46<!--/v--> s on host a (`e-2026-10-18-ci-multi`).
+
+### e-2026-10-18-ci-multi: code-interpreter-v1 on two independent Azure VMs
+
+**Question.** With E2B's Code Interpreter in `code-interpreter-v1`, does the agent protocol give the same result on host a, does capacity add up when a client spreads sessions over two installs, and what survives when one host's E2B stack stops?
+
+**Input.** Hosts a and c, the tool on host a for every phase ([`evidence/runs/e-e2b-2026-10-18/ci-multi.json`](evidence/runs/e-e2b-2026-10-18/ci-multi.json)):
+
+<!-- BEGIN GENERATED: e-cm-input -->
+> Host a: `Standard_D4ds_v7` (4 vCPU, 16 GiB), zone `1`, OS disk `Standard HDD (Standard_LRS) · 128 GB`, `HUGEPAGES=4096`; installed for `e-2026-10-14-agent`; the pool raised to 4096 pages, the build workspace row added, the OS disk grown to 128 GB and `code-interpreter-v1` built in `e-2026-10-15-latest`.
+> Host c: `Standard_D4ds_v7` (4 vCPU, 16 GiB), zone `2`, OS disk `Standard HDD (Standard_LRS) · 128 GB`, `HUGEPAGES=4096`; the install of `e-2026-10-17-ci-agent`.
+> Tool: `tools/measure_e2b.py` (SHA-256 `aca40d17e315…`), every phase run on host a; E2B Code Interpreter only (`e2b 2.56.0`, `e2b-code-interpreter 2.11.0`, template `code-interpreter-v1`, 2 vCPU, 2048 MB).
+> Network: the tool reached host c's ports `3000` and `3002` over the private network; host c's NSG admitted only host a's private address on those two ports and denied every other inbound connection. Each host's API key came from an environment variable named in the hosts file.
+> Agent runs on host a: "Where is Bangkok? Answer in one short sentence.", then "How many questions have I asked before this one? Number only." 3 times, pausing for 5 s after the second turn; agent instructions and tool schema as in `e-2026-10-14-agent`.
+> At once, 4 sessions on host a alone, then 4 on each host: "Use run_in_e2b_sandbox to write SCALE-{k} to /home/user/scale.txt. Reply only OK.", then "Use run_in_e2b_sandbox to read /home/user/scale.txt. What did I ask you to remember? Word only.".
+> Host stop: on each host one live session ("Use run_in_e2b_sandbox to write LANTERN-7 to /home/user/live.txt. Reply only OK.") and one paused sandbox ("Use run_in_e2b_sandbox to write PAUSED-{h} to /home/user/paused.txt. Reply only OK.", `{h}` = the host's name); then `docker compose stop` on host a with the VM running, later `docker compose up -d --wait`; reads back "Use run_in_e2b_sandbox to read /home/user/live.txt. What is the code word? Reply with the word only." and "Use run_in_e2b_sandbox to read /home/user/paused.txt. What does it say? Word only.".
+<!-- END GENERATED: e-cm-input -->
+
+**Varied and fixed.** Fixed: the template, the pool (`HUGEPAGES=4096` on both), the SDKs, the tool, the model, the agent and the prompts. Varied: the host, and how many hosts the sessions were spread over. Not fixed: the hosts are in different zones (host a in `1`, host c in `2`), and host a has run E2B since 2026-10-14.
+
+**Result.** The 3-run agent protocol on host a:
+
+<!-- BEGIN GENERATED: e-cm-agent -->
+| Run | Create → Running | First answer | Cold | Follow-up | Pause | Resume | Answer after resume | Resume → answer | Answers |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---|
+| 1 | 10.53 | 2.95 | 13.48 | 3.03 | 2.08 | 0.39 | 3.91 | 4.3 | Bangkok is the capital city of Thailand in Southeast Asia. / 1 / 2 / 3 |
+| 2 | 0.09 | 2.65 | 2.74 | 4.02 | 0.16 | 1.46 | 2.68 | 4.14 | Bangkok is the capital city of Thailand in Southeast Asia. / 1 / 2 / 3 |
+| 3 | 0.22 | 2.5 | 2.72 | 2.59 | 0.15 | 0.38 | 3.36 | 3.74 | Bangkok is the capital city of Thailand. / 1 / 2 / 3 |
+| **median** | **0.22** | **2.65** | **2.74** | **3.03** | **0.16** | **0.39** | **3.36** | **4.14** |  |
+
+History inside the sandbox grew 1, 2, 3, 4 in 3 of 3 runs. Run 1's create took 10.53 s, the first `code-interpreter-v1` create of this run on host a; the others took 0.09, 0.22 s. The record does not show where that time went. Every turn made one `run_code` call, 0.013–0.574 s of the turn; guest kernel `6.1.177+`. Model HTTP attempts: 200 ×24. No sandbox, conversation or agent version was left.
+<!-- END GENERATED: e-cm-agent -->
+
+Sessions at once:
+
+<!-- BEGIN GENERATED: e-cm-scale -->
+| Phase | Sessions at once | Answered | Refused | Sandbox create, s | Whole session, s | Model HTTP attempts |
+|---|---:|---|---|---:|---:|---|
+| host a alone | 4 | 3/4 (a 3/4) | 1/4 | 0.279–0.31 | 6.13–8.16 | 200 ×12 |
+| hosts a and c | 8 | 6/8 (a 3/4, c 3/4) | 2/8 | 0.242–0.265 | 5.25–7.13 | 200 ×24 |
+
+Every refused session got `500: Failed to place sandbox` at create and never reached the model. At `HUGEPAGES=4096` one host fits 3 `code-interpreter-v1` sandboxes (`e-2026-10-18-ci-host`), so 4 on a host leaves one refused there; the second host added its own room. The client gave the sessions to the hosts in turn. No sandbox or conversation was left.
+<!-- END GENERATED: e-cm-scale -->
+
+Stopping host a's E2B stack with `docker compose stop` (the VM kept running):
+
+<!-- BEGIN GENERATED: e-cm-hostloss -->
+| Check | Observed |
+|---|---|
+| host c, live session: read its file | ok, 2.77 s, "LANTERN-7" |
+| host c: new session | ok, 2.52 s, "COLD-1" |
+| host c: resume host a's paused sandbox | failed: `SandboxNotFoundException: Paused sandbox … not found` |
+| host a, stopped: create | failed: `connection refused` |
+| host a, stopped: resume its own paused sandbox | failed: `connection refused` |
+| host a, after restart: resume its own paused sandbox | ok, 4.78 s, "PAUSED-a" |
+| host a, after restart: the sandbox that was running when it stopped | failed: `SandboxNotFoundException: Paused sandbox … not found` |
+| host a, after restart: new session | ok, 4.47 s, "COLD-2" |
+| `docker compose stop` / `docker compose up -d --wait` | 77.86 s / 63.14 s |
+<!-- END GENERATED: e-cm-hostloss -->
+
+**Boundary.**
+- Two independent installs and a client that spreads sessions over them, not an E2B cluster: no shared scheduler, no failover and no shared storage. A paused sandbox could only resume on the host that paused it, as with `base` in `e-2026-10-15-multi`.
+- The host stop was `docker compose stop` on a running VM; a lost VM or disk was not measured.
+- One run of each phase. The tool reached host c over the private network from host a, so host c's sessions include that hop and host a's do not.
+
+### e-2026-10-18-ci-scale: a new Standard_D8ds_v7 sized for 8 code-interpreter-v1 sandboxes
+
+**Question.** If the hugepage pool, not the CPU, limits a host, does a VM with room for 8 `code-interpreter-v1` sandboxes answer 8 sessions at once, how long does README step 7 take on a new VM, and does the template build on the first attempt?
+
+**Input.** Host d, a new VM ([`evidence/runs/e-e2b-2026-10-18/ci-scale.json`](evidence/runs/e-e2b-2026-10-18/ci-scale.json)):
+
+<!-- BEGIN GENERATED: e-cs-input -->
+> Host d: a new `Standard_D8ds_v7` (8 vCPU, 32 GiB), zone `2`, OS disk `Standard HDD (Standard_LRS) · 128 GB`, host kernel `6.17.0-1022-azure`.
+> Install: README step 7 as written, with one difference: `HUGEPAGES=8448` instead of 4096, room for 8 sandboxes of 1024 pages plus 256; Docker Engine from Docker's apt repository; `compose.yaml` and `.env` at `588e5b9` (SHA-256 OK); then the `project_limits` row, `sleep 300`, `code-interpreter` at `162a2a2` and its unchanged `build_prod.py`.
+> Tool: `tools/measure_e2b.py` (SHA-256 `aca40d17e315…`), `measure_e2b.py perf --cold 5 --scale 4,8 --recovery`, then `measure_e2b.py host --bench 0 --reserve 9`, on host d itself against `localhost`; E2B Code Interpreter only (`e2b 2.56.0`, `e2b-code-interpreter 2.11.0`, template `code-interpreter-v1`, 2 vCPU, 2048 MB).
+> Perf prompts as in `e-2026-10-17-ci-agent`: new sessions "Use run_in_e2b_sandbox to print COLD-{i}, then reply with exactly COLD-{i}" (n = 1–5); one session "Use run_in_e2b_sandbox to save the code word LANTERN-7 to /home/user/codeword.txt. Reply only OK.", then "Use run_in_e2b_sandbox to read /home/user/codeword.txt. What is the code word? Reply with the word only.", then "Use run_in_e2b_sandbox to verify the sandbox is alive, then reply with exactly WARM-1", then "Use run_in_e2b_sandbox to verify the sandbox is alive, then reply with exactly WARM-2"; 4 and 8 sessions at once, each "Use run_in_e2b_sandbox to write SCALE-{k} to /home/user/scale.txt. Reply only OK.", then "Use run_in_e2b_sandbox to read /home/user/scale.txt. What did I ask you to remember? Word only."; replacement: a live session ran "Use run_in_e2b_sandbox to write LANTERN-7 to /home/user/live.txt. Reply only OK." and, after another sandbox was killed and replaced, "Use run_in_e2b_sandbox to read /home/user/live.txt. What is the code word? Reply with the word only.".
+> Reservation: as in `e-2026-10-18-ci-host`, up to 9 sandboxes, each checked with `print(1 + 1)`.
+<!-- END GENERATED: e-cs-input -->
+
+**Varied and fixed.** Against `e-2026-10-17-ci-perf`, the VM size (`Standard_D4ds_v7` → `Standard_D8ds_v7`), the pool (4096 → 8448 pages), the host kernel and the tool revision (`cbc96f2…` → `aca40d1…`) changed; the template, SDKs, model, agent, prompts and clocks stayed.
+
+**Result.** README step 7 on host d:
+
+<!-- BEGIN GENERATED: e-cs-install -->
+| Step | Start (UTC) | Seconds |
+|---|---|---:|
+| Docker Engine from Docker's apt repository | 09:32:14 | 42 |
+| download and check the two files, `docker compose up -d --wait` | 09:32:56 | 215 |
+| `project_limits` row, then `sleep 300` | 09:36:31 | 301 |
+| clone `code-interpreter` at `162a2a2`, build environment | 09:41:32 | 7 |
+| `build_prod.py`, 30 steps | 09:41:39 | 929 |
+| **total** |  | **1494** |
+
+`psql` printed `INSERT 0 1`; the build exited 0 on its first attempt, its last builder step was 30/30 and it reported `Build finished, took 15m26s`.
+<!-- END GENERATED: e-cs-install -->
+
+New sessions:
+
+<!-- BEGIN GENERATED: e-cs-cold -->
+| Start (UTC) | Answer | Sandbox created → Ready, s | Agent turn, s | New session → answer, s |
+|---|---|---:|---:|---:|
+| 10:01:46 | COLD-1 | 0.24 | 2.83 | 3.15 |
+| 10:01:50 | COLD-2 | 0.068 | 2.26 | 2.38 |
+| 10:01:52 | COLD-3 | 0.062 | 2.56 | 2.67 |
+| 10:01:55 | COLD-4 | 0.07 | 2.26 | 2.38 |
+| 10:01:57 | COLD-5 | 0.06 | 2.55 | 2.66 |
+
+Across the 5 new sessions: sandbox create → Ready 0.068 s median (0.06–0.24; n=5), Prompt Agent turn 2.55 s median (2.26–2.83; n=5), end-to-end new session → answer 2.66 s median (2.38–3.15; n=5).
+<!-- END GENERATED: e-cs-cold -->
+
+Follow-ups in one session:
+
+<!-- BEGIN GENERATED: e-cs-warm -->
+| Turn | Answer | Sandbox tool, s | Turn, s |
+|---|---|---:|---:|
+| 1 (new session; the sandbox was created before it) | OK | 0.047 | 2.76 |
+| 2 | LANTERN-7 | 0.013 | 2.28 |
+| 3 | WARM-1 | 0.01 | 2.76 |
+| 4 | WARM-2 | 0.009 | 33.32 |
+
+The sandbox was created in 0.053 s before turn 1. Follow-ups 2–4: 2.76 s median (2.28–33.32; n=3).
+
+Turn 4 took 33.32 s, of which the sandbox tool took 0.009 s; the rest was the model's side of the turn.
+<!-- END GENERATED: e-cs-warm -->
+
+At once and sandbox replacement:
+
+<!-- BEGIN GENERATED: e-cs-scale -->
+| At once | Answered | Refused | Sandbox create, s | Whole session, s | Model HTTP attempts |
+|---:|---|---|---:|---:|---|
+| 4 | 4/4 | 0/4 | 0.092–0.159 | 4.47–7.97 | 200 ×16 |
+| 8 | 8/8 | 0/8 | 0.105–0.337 | 4.85–10.18 | 200 ×32 |
+
+No session was refused. Sandbox replacement after `kill`: a new `code-interpreter-v1` sandbox was Ready in 0.063 s; follow-up on a live session HTTP 200, 3.5 s, "LANTERN-7", state preserved: true. No sandbox or conversation was left.
+<!-- END GENERATED: e-cs-scale -->
+
+Hugepages taken as sandboxes were added:
+
+<!-- BEGIN GENERATED: e-cs-reserve -->
+| Sandboxes | Create, s | `HugePages_Free` | `HugePages_Rsvd` | Pages taken | MemAvailable, MiB |
+|---|---:|---:|---:|---:|---:|
+| 0 (before) |  | 8175 | 751 | 1024 | 11899 |
+| 1 | 0.05 | 8183 | 759 | 1024 | 11895 |
+| 2 | 0.05 | 7908 | 1508 | 2048 | 11887 |
+| 3 | 0.053 | 7640 | 2264 | 3072 | 11879 |
+| 4 | 0.052 | 7372 | 3020 | 4096 | 11891 |
+| 5 | 0.057 | 7103 | 3775 | 5120 | 11887 |
+| 6 | 0.056 | 6830 | 4526 | 6144 | 11887 |
+| 7 | 0.062 | 6565 | 5285 | 7168 | 11885 |
+| 8 | 0.06 | 6286 | 6030 | 8192 | 11875 |
+| 9: refused | 0.047 |  |  |  |  |
+| 0 (all killed) |  | 8448 | 0 | 0 | 11931 |
+
+Pages taken = `HugePages_Total` (8448) − free + reserved; pages are 2 MiB. Each sandbox took 1024 pages, its whole 2048 MiB, as soon as it was created; 0 pages were taken by other processes on host d. With 8 sandboxes, 8448 − 0 − 8 × 1024 = 256 pages were left, fewer than one sandbox needs, and create 9 got `500: Failed to place sandbox` in 0.047 s. MemAvailable stayed at 11875–11899 MiB: the pool is set aside at boot, so sandbox memory does not show there. The reading before the first create showed 1024 pages taken, and after it still 1024: the read-back sandbox, killed just before, had not yet given its pages back.
+
+Read-back on host d: Firecracker `v1.14-0.2.0`, guest kernel `6.1.177+`, 2 vCPU, MemTotal 1982 MiB, as on host c; host kernel `6.17.0-1022-azure`.
+<!-- END GENERATED: e-cs-reserve -->
+
+**Boundary.**
+- One run of each phase on one host; the tool ran on host d itself.
+- 8 at once answered 8/8 here and 3/8 on the 4096-page `Standard_D4ds_v7` of `e-2026-10-17-ci-perf`. The hosts also differ in size, kernel and day, so this shows the larger pool admitting the sandboxes, not a matched speed comparison.
+- The build passed on its one attempt after the README's 5-minute wait; one build does not show that it always will.
+- As in `e-2026-10-17-ci-perf`, the follow-up after `kill` went to a different live session; it does not show continuity of the killed sandbox.
+
 ### Numbers you can recompute
 
-Every published metric above comes from [`evidence/measurements.json`](evidence/measurements.json), which [`tools/build_measurements.py`](tools/build_measurements.py) recomputes from `evidence/runs/` after checking each file's SHA-256 against [`evidence/runs/INDEX.json`](evidence/runs/INDEX.json). It also checks: A's cold equals create plus first answer and recover equals resume plus answer in every run; each D cold pod's create-to-Ready equals its Kubernetes timestamps and runs `kata-vm-isolation`; D's warm session and the different live session used after pod deletion both remembered `LANTERN-7`. For the 2026-10-18 runs: C's cold equals apply → Ready plus the first answer and its resume-to-answer equals Ready plus the answer in every run; B's and D's session runs must keep their file and question count; every at-once session's remembered flag must match its answer, and A and C must leave nothing behind. Medians are reported only for odd samples; even samples show their values.
+Every published metric above comes from [`evidence/measurements.json`](evidence/measurements.json), which [`tools/build_measurements.py`](tools/build_measurements.py) recomputes from `evidence/runs/` after checking each file's SHA-256 against [`evidence/runs/INDEX.json`](evidence/runs/INDEX.json). It also checks: A's cold equals create plus first answer and recover equals resume plus answer in every run; each D cold pod's create-to-Ready equals its Kubernetes timestamps and runs `kata-vm-isolation`; D's warm session and the different live session used after pod deletion both remembered `LANTERN-7`. For the 2026-10-18 runs: C's cold equals apply → Ready plus the first answer and its resume-to-answer equals Ready plus the answer in every run; B's and D's session runs must keep their file and question count; every at-once session's remembered flag must match its answer, and A and C must leave nothing behind. For E's 2026-10-18 runs: each of the 20 cycles must read its variable back as 42; the pages taken must grow by the same amount per sandbox, equal to the template's memory, and the sandboxes that fit must equal the pool minus the other pages divided by that amount; the install's parts must add up to its total. Medians are reported only for odd samples; even samples show their values.
 
 Duration fields and published samples must be finite, non-negative numbers, not booleans or numeric strings. An optional timing recorded as null remains unmeasured and cannot enter a published sample. C's resume milestones must satisfy Ready → LoadBalancer healthy → first answer; a paired D pod-ready duration cannot exceed its request wall time beyond timestamp rounding, and concurrency totals require every session record. JSON output rejects NaN and infinity.
 
@@ -1016,6 +1250,7 @@ python tools/measure_responses.py --cold 3 --warm-turns 3
 python tools/measure_responses.py --cold 3 --warm-turns 3 --scale 4,8 --recovery --observe
 python tools/measure_e2b.py agent --runs 3
 python tools/measure_e2b.py perf --cold 5 --scale 4,8 --recovery
+python tools/measure_e2b.py host --bench 20 --reserve 4   # run this one on the E2B host itself
 python tools/measure_c.py --cold 3 --pvc 3 --scale 4,8
 ```
 
@@ -1076,7 +1311,7 @@ Not tested here: the tools against a fresh subscription end to end after this re
 - `LOCAL_MEASUREMENT`: D's capacity was at most <!--v:d.capacity.per_node-->5<!--/v--> sessions per `Standard_D4s_v5` node with the sample's 500m CPU / 1 Gi request plus 600 Mi Kata overhead; a node that also hosts system pods fits fewer.
 - `NOT_MEASURED`: when B's platform reclaims an idle session (`b-2026-10-18-idle` read the status once, after the wait) and B's session loss; A's host loss; D's behaviour once the service ends a session; the Foundry-governed agent calling an ACA sandbox per task; D's latency under concurrency with free capacity; third-party sandboxes other than E2B; E2B Bring Your Own Cloud and private cloud; the official E2B Azure Terraform module, including its scale-set replacement of an unhealthy instance from a fresh disk; the loss of a whole E2B VM or its disk.
 - `SOURCE_FACT`: E2B Embed "is one machine, by design"; E2B's ways past one machine are private cloud (in development), Bring Your Own Cloud operated by E2B in your account, and E2B Cloud ([Embed](https://github.com/e2b-dev/runtime/blob/588e5b9500b0987bc5a700d91483b03f0ae7d2a2/embed/README.md#when-one-node-is-not-enough)). It answers over plain HTTP with no TLS of its own. The Azure Terraform install is a scale set of one with no persistent data volume: a replacement starts from a fresh disk and loses the templates you built, and stopping the stack gets the instance replaced about two minutes after `/health` stops answering ([Azure guide](https://github.com/e2b-dev/runtime/blob/588e5b9500b0987bc5a700d91483b03f0ae7d2a2/embed/terraform/azure/README.md#limitations)).
-- `SOURCE_FACT`: E2B's Compose guide sizes `HUGEPAGES` by "the sandboxes you will run at once" and states 256 pages for a 512 MiB `base` sandbox at full memory and about 90 idle ([requirements](https://github.com/e2b-dev/runtime/blob/588e5b9500b0987bc5a700d91483b03f0ae7d2a2/embed/compose/README.md#requirements)). In `e-2026-10-15-multi` each idle `base` sandbox reserved 256 pages at create, so the default pool held 7, not about 20.
+- `SOURCE_FACT`: E2B's Compose guide sizes `HUGEPAGES` by "the sandboxes you will run at once" and states 256 pages for a 512 MiB `base` sandbox at full memory and about 90 idle ([requirements](https://github.com/e2b-dev/runtime/blob/588e5b9500b0987bc5a700d91483b03f0ae7d2a2/embed/compose/README.md#requirements)). In `e-2026-10-18-ci-host` and `e-2026-10-18-ci-scale` each `code-interpreter-v1` sandbox took 1024 pages, its whole 2 GiB, at create, idle or not, so 4096 pages held 3 and 8448 held 8; `e-2026-10-15-multi` measured the same for `base`: 256 pages each, 7 in the default pool, not about 20.
 - `SOURCE_FACT`: ACA Sandboxes start "from prewarmed pools for near-instant availability" and resume "with sub-second restore times" ([overview](https://learn.microsoft.com/azure/container-apps/sandboxes-overview)). Selectable tiers (vCPU / GB): XS 0.25 / 0.5, S 0.5 / 1, M 1 / 2, L 2 / 4, XL 4 / 8. Idle auto-suspend is configurable; Memory preserves memory and disk, while Disk preserves disk only. The local 900 s setting is not a service-wide default.
 - `SOURCE_FACT`: hosted agents run in "per-session VM-isolated sandboxes" with `$HOME` and `/files` persisted; idle timeout 2–60 minutes, default 15; sessions deleted after 30 days of inactivity ([hosted agents](https://learn.microsoft.com/azure/foundry/agents/concepts/hosted-agents)). Stopping a session with `POST .../sessions/{id}:stop` ends its compute and keeps the persistent filesystem ([manage sessions](https://learn.microsoft.com/azure/foundry/agents/how-to/manage-hosted-sessions#stop-a-session)).
 - `SOURCE_FACT`: hosted agent [sandbox sizes](https://learn.microsoft.com/azure/foundry/agents/concepts/hosted-agents#sandbox-sizes) are 0.5 vCPU / 1 GiB, 1 vCPU / 2 GiB and 2 vCPU / 4 GiB; the values set on an agent version apply to each session, and no VM SKU is chosen. The workshop's module-02 uses 0.5 vCPU / 1 GiB.
@@ -1088,7 +1323,7 @@ Not tested here: the tools against a fresh subscription end to end after this re
 - `SOURCE_FACT`: the [fixed module-02 implementation](https://github.com/oxcp/ainotes/blob/905f2c2/agenthost/module-02/agent-src/main.py) makes `MODEL_ROUTING=direct` call the Foundry project endpoint. A project with a registered native AI Gateway may still forward those calls through APIM; the mode name alone does not prove a gateway bypass.
 - `SOURCE_FACT`: status sources: A [GA on 2026-09-23](https://techcommunity.microsoft.com/blog/appsonazureblog/azure-container-apps-sandboxes-now-generally-available/4559125); B [GA in 2026-06](https://azure.microsoft.com/updates?id=563596) (Azure Update "Generally Available: Hosted agents in Foundry Agent Service"; the earlier [Build post of 2026-06-02](https://devblogs.microsoft.com/foundry/hosted-agents-build26/) described the public preview before GA); C [Pod Sandboxing GA on 2025-11-18](https://azure.microsoft.com/updates?id=526237), with agent-sandbox v0.5.2 as an open-source project.
 - `LOCAL_MEASUREMENT`: A's history length continued increasing in the saved run. This checks history continuity, not exact answer correctness or preservation of arbitrary process memory.
-- `SOURCE_FACT`: D's cost floor of <!--v:d.cost_floor.value-->0.484<!--/v--> USD/h is two `Standard_D4s_v5` nodes at 0.192 USD/h each plus the AKS Standard tier at 0.10 USD/h, East US 2 retail prices queried 2026-09-21; E's single-VM cost floor of <!--v:e.cost_floor.value-->0.344<!--/v--> USD/h is one `Standard_D4ds_v7` Linux VM at 0.326 USD/h, one Standard static public IP at 0.005 USD/h and one 50 GB Premium SSD P6 disk at 0.013 USD/h, East US 2 retail prices queried 2026-10-14; no discounts or tax. This is not the cost of the three-Kata-node benchmark pool.
+- `SOURCE_FACT`: D's cost floor of <!--v:d.cost_floor.value-->0.484<!--/v--> USD/h is two `Standard_D4s_v5` nodes at 0.192 USD/h each plus the AKS Standard tier at 0.10 USD/h, East US 2 retail prices queried 2026-09-21; E's single-VM cost floor of <!--v:e.cost_floor.value-->0.344<!--/v--> USD/h is one `Standard_D4ds_v7` Linux VM at 0.326 USD/h, one Standard static public IP at 0.005 USD/h and one 50 GB Premium SSD P6 disk at 0.013 USD/h, East US 2 retail prices queried 2026-10-14; a `Standard_D8ds_v7` Linux VM, the size of `e-2026-10-18-ci-scale`, is 0.653 USD/h (queried 2026-10-18); no discounts or tax. This is not the cost of the three-Kata-node benchmark pool.
 - D's onboarding durations (role assignments about <!--v:d.role_assignments.value-->120<!--/v--> s, `azd provision` <!--v:d.azd_provision.value-->522<!--/v--> s, `azd deploy` <!--v:d.azd_deploy.value-->212<!--/v--> s) come from the author's console recorded in the earlier field record; the console itself was not kept.
 
 **Assets.**

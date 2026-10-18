@@ -320,18 +320,20 @@ import measure_e2b  # noqa: E402
 class FakeHost:
     def __init__(self, name, root):
         self.name, self.root, self.sandboxes, self.down = name, Path(root), {}, False
-        self.lossy_resume, self.ids = False, itertools.count(1)
+        self.lossy_resume, self.ids, self.capacity = False, itertools.count(1), None
 
 
 class FakeSandbox:
-    """One sandbox: its /home/user is a temporary folder, and commands run in their own Python process."""
+    """One code-interpreter-v1 sandbox: its /home/user is a temporary folder."""
 
     def __init__(self, host, sandbox_id):
         self.host, self.sandbox_id = host, sandbox_id
         self.home = host.root / f"{sandbox_id}-{next(host.ids)}"
         self.home.mkdir(parents=True)
-        self.commands = SimpleNamespace(run=self._run)
         self.kernel = {}
+
+    def get_info(self):
+        return SimpleNamespace(name="code-interpreter-v1", cpu_count=2, memory_mb=2048)
 
     def run_code(self, code, timeout=None):
         """Code Interpreter: one namespace per sandbox, kept between cells like the Jupyter kernel."""
@@ -345,13 +347,6 @@ class FakeSandbox:
         except Exception as exc:  # noqa: BLE001 - returned like the SDK's ExecutionError
             error = SimpleNamespace(name=type(exc).__name__, value=str(exc))
         return SimpleNamespace(logs=SimpleNamespace(stdout=[out.getvalue()]), text=None, error=error)
-
-    def _run(self, cmd, timeout=60):
-        if self.host.down:
-            raise RuntimeError(f"host {self.host.name} unreachable")
-        script = cmd.split("<<'PY'\n", 1)[1].rsplit("\nPY", 1)[0].replace("/home/user", self.home.as_posix())
-        p = subprocess.run([sys.executable, "-"], input=script, capture_output=True, text=True, timeout=timeout)
-        return SimpleNamespace(exit_code=p.returncode, stdout=p.stdout, stderr=p.stderr)
 
     def beta_pause(self):
         if self.host.down:
@@ -378,6 +373,8 @@ class FakeSDK:
             @staticmethod
             def create(template, timeout=300, api_url=None, sandbox_url=None, api_key=None):
                 h = host(api_url)
+                if h.capacity is not None and len(h.sandboxes) >= h.capacity:
+                    raise RuntimeError("500: Failed to place sandbox")
                 s = FakeSandbox(h, f"{h.name}-sbx-{next(h.ids)}")
                 h.sandboxes[s.sandbox_id] = s
                 return s
@@ -494,11 +491,9 @@ def test_e2b_prompts_match_the_measured_run():
         assert doc["agent"] == {"instructions": measure_e2b.INSTRUCTIONS, "tools": measure_e2b.TOOLS_SPEC}
 
 
-@pytest.mark.parametrize("executor", sorted(measure_e2b.EXECUTORS))
 @pytest.mark.parametrize("lossy", (False, True))
-def test_e2b_agent_run_checks_history_across_pause(monkeypatch, tmp_path, lossy, executor):
+def test_e2b_agent_run_checks_history_across_pause(monkeypatch, tmp_path, lossy):
     monkeypatch.setattr(measure_e2b.time, "sleep", lambda _: None)
-    monkeypatch.setattr(measure_e2b, "EXECUTOR", executor)
     hosts, fakes = e2b_hosts(["a"], monkeypatch, tmp_path)
     fakes["http://a:3000"].lossy_resume = lossy
     rec = measure_e2b.agent_run(FakeFoundry(), "1", hosts["a"], 1)
@@ -561,9 +556,8 @@ def test_e2b_main_fails_on_lost_state_or_a_leftover(monkeypatch, tmp_path):
         monkeypatch.setenv(k, v)
     monkeypatch.delenv("FOUNDRY_TOKEN_SOURCE", raising=False)
     monkeypatch.setattr(measure_e2b.time, "sleep", lambda _: None)
-    monkeypatch.setattr(measure_e2b, "EXECUTOR", measure_e2b.EXECUTOR)
     fakes = {"http://a:3000": FakeHost("a", tmp_path / "a")}
-    monkeypatch.setattr(measure_e2b, "load_sdk", lambda executor: FakeSDK(fakes).triple)
+    monkeypatch.setattr(measure_e2b, "load_sdk", lambda: FakeSDK(fakes).triple)
     monkeypatch.setattr(measure_e2b.Host, "health", lambda self: 200)
     monkeypatch.setattr(measure_e2b, "token", lambda: "test-token")
     fd = FakeFoundry()
@@ -581,14 +575,40 @@ def test_e2b_main_fails_on_lost_state_or_a_leftover(monkeypatch, tmp_path):
     assert measure_e2b.main(["agent", "--runs", "1", "--out-dir", str(tmp_path / "left")]) == 1
 
 
+def test_e2b_host_mode_reads_the_vmm_benchmarks_and_reserves(monkeypatch, tmp_path):
+    for k, v in {"E2B_API_URL": "http://a:3000", "E2B_SANDBOX_URL": "http://a:3002", "E2B_API_KEY": "test-key"}.items():
+        monkeypatch.setenv(k, v)
+    monkeypatch.delenv("PROJECT_ENDPOINT", raising=False)
+    monkeypatch.setattr(measure_e2b.time, "sleep", lambda _: None)
+    fake = FakeHost("a", tmp_path / "a")
+    fake.capacity = 2
+    monkeypatch.setattr(measure_e2b, "load_sdk", lambda: FakeSDK({"http://a:3000": fake}).triple)
+    monkeypatch.setattr(measure_e2b.Host, "health", lambda self: 200)
+    monkeypatch.setattr(measure_e2b, "GUEST_PROBE", "print('6.1.177+', 2, 1985)")
+    monkeypatch.setattr(measure_e2b, "vmm_processes", lambda: ["/fc-versions/v1.14-0.2.0/amd64/firecracker"])
+    monkeypatch.setattr(measure_e2b, "meminfo", lambda: {"hugepages_total": 4096, "hugepages_rsvd": 62,
+                                                         "hugepages_free": 4083 - 1024 * len(fake.sandboxes),
+                                                         "mem_available_mb": 5700})
+    assert measure_e2b.main(["host", "--bench", "2", "--reserve", "3", "--out-dir", str(tmp_path / "out")]) == 0
+    doc = json.loads(next((tmp_path / "out").glob("e2b-host-*.json")).read_text(encoding="utf-8"))
+    iso = doc["isolation"]
+    assert (iso["guest_kernel"], iso["guest_cpus"], iso["sandbox_info"]["memory_mb"]) == ("6.1.177+", 2, 2048)
+    assert iso["vmm_processes"] and [r["state_kept"] for r in doc["bench"]["runs"]] == [True, True]
+    res = doc["reservation"]
+    assert [s["hugepages_free"] for s in res["steps"]] == [3059, 2035] and res["refused"]["at"] == 3
+    assert res["sandboxes_deleted"] and not fake.sandboxes and doc["leftover_sandboxes"] == {"a": 0}
+    assert "agent" not in doc and "test-key" not in json.dumps(doc)
+    fake.lossy_resume = True
+    assert measure_e2b.main(["host", "--bench", "1", "--out-dir", str(tmp_path / "lossy")]) == 1
+
+
 def test_e2b_agent_answers_and_cleans_up(monkeypatch, tmp_path, capsys):
     import e2b_agent
     for k, v in {"PROJECT_ENDPOINT": "https://example.com/api/projects/p", "ACA_MODEL": "gpt-5.4-mini",
                  "E2B_API_URL": "http://a:3000", "E2B_SANDBOX_URL": "http://a:3002", "E2B_API_KEY": "test-key"}.items():
         monkeypatch.setenv(k, v)
-    monkeypatch.setattr(measure_e2b, "EXECUTOR", measure_e2b.EXECUTOR)
     fakes = {"http://a:3000": FakeHost("a", tmp_path / "a")}
-    monkeypatch.setattr(measure_e2b, "load_sdk", lambda executor: FakeSDK(fakes).triple)
+    monkeypatch.setattr(measure_e2b, "load_sdk", lambda: FakeSDK(fakes).triple)
     monkeypatch.setattr(measure_e2b, "token", lambda: "test-token")
     fd = FakeFoundry()
     monkeypatch.setattr(measure_e2b, "Foundry", lambda endpoint, tok: fd)
@@ -660,8 +680,7 @@ def test_e2b_recovery_and_hostloss_clean_up_when_a_call_fails(monkeypatch, tmp_p
 def test_e2b_bad_hosts_file_is_a_setting_error(monkeypatch, tmp_path):
     for k, v in {"PROJECT_ENDPOINT": "https://example.com/api/projects/p", "ACA_MODEL": "gpt-5.4-mini"}.items():
         monkeypatch.setenv(k, v)
-    monkeypatch.setattr(measure_e2b, "load_sdk", lambda executor: FakeSDK({}).triple)
-    monkeypatch.setattr(measure_e2b, "EXECUTOR", measure_e2b.EXECUTOR)
+    monkeypatch.setattr(measure_e2b, "load_sdk", lambda: FakeSDK({}).triple)
     for name, content in (("missing.json", None), ("broken.json", "{not json"), ("flat.json", '{"a": "http://a:3000"}')):
         path = tmp_path / name
         if content is not None:
@@ -754,7 +773,7 @@ def test_e2b_code_interpreter_records_match_the_tools():
     for name in ("ci-agent", "ci-perf"):
         doc = json.loads((ROOT / f"evidence/runs/e-e2b-2026-10-17/{name}.json").read_text(encoding="utf-8"))
         assert doc["executor"] == "code-interpreter"
-        assert doc["template"]["name"] == measure_e2b.EXECUTORS["code-interpreter"]
+        assert doc["template"]["name"] == measure_e2b.TEMPLATE
         assert doc["agent"] == {"instructions": measure_e2b.INSTRUCTIONS, "tools": measure_e2b.TOOLS_SPEC}
         assert doc["tool"]["file"] == "tools/measure_e2b.py"
     agent = json.loads((ROOT / "evidence/runs/e-e2b-2026-10-17/ci-agent.json").read_text(encoding="utf-8"))

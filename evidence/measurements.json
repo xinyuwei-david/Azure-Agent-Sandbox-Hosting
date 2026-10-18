@@ -28,7 +28,10 @@
     "e-e2b-2026-10-15/latest.json": "3861f0b8d5f8f181831f9275237bb4de15cb89cadf4164e13a9165cd64505209",
     "e-e2b-2026-10-15/multi.json": "7b42cb1af075252de478426bf4a09603278bbb1f9fd99b0343dfff96c61c5682",
     "e-e2b-2026-10-17/ci-agent.json": "31d576dd8189977eefa36aca15807510b423b5ec1b45ee2334848e80e66bfac1",
-    "e-e2b-2026-10-17/ci-perf.json": "0b2a96eadf29aa827f1f0ab86735b9a35b53a37e833dac205c6a8510ccaba006"
+    "e-e2b-2026-10-17/ci-perf.json": "0b2a96eadf29aa827f1f0ab86735b9a35b53a37e833dac205c6a8510ccaba006",
+    "e-e2b-2026-10-18/ci-host.json": "dcc54b857ece5107c16b0928d45d9811ed1fb47cab02f67f8d59047bbb900202",
+    "e-e2b-2026-10-18/ci-multi.json": "5153f40d0d464f890a5963a1e576ea94f3450041c0cd57fd1171bcc2568c5630",
+    "e-e2b-2026-10-18/ci-scale.json": "00e53a87612def26614d304b665a5409e4e82c1c4720a2a514f36dfb54e6b313"
   },
   "metrics": {
     "a.create": {
@@ -2504,6 +2507,715 @@
       "built_s": 92,
       "cached_through": 19,
       "steps": 30
+    },
+    "e.h.isolation": {
+      "run": "e-2026-10-18-ci-host",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "Firecracker process behind a code-interpreter-v1 sandbox in host c's process list; kernel, vCPUs and MemTotal read inside it with run_code; uname -r on the host",
+      "n": 1,
+      "unit": "read-back",
+      "vmm_type": "firecracker",
+      "firecracker_version": "v1.14-0.2.0",
+      "guest_kernel": "6.1.177+",
+      "host_kernel": "7.0.0-1017-azure",
+      "guest_cpus": 2,
+      "guest_mem_total_mb": 1982,
+      "template_memory_mb": 2048
+    },
+    "e.h.create": {
+      "run": "e-2026-10-18-ci-host",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "Sandbox.create until it returns; 20 code-interpreter-v1 sandboxes one after another on host c, no model",
+      "n": 20,
+      "unit": "s",
+      "values": [
+        0.0881,
+        0.0994,
+        0.0913,
+        0.0979,
+        0.1191,
+        0.262,
+        0.1158,
+        0.5583,
+        0.4766,
+        0.1685,
+        0.1279,
+        0.3046,
+        0.1847,
+        0.2382,
+        0.1418,
+        0.2665,
+        0.2866,
+        0.3796,
+        0.1133,
+        0.1397
+      ],
+      "min": 0.0881,
+      "max": 0.5583,
+      "under_0_1": 4,
+      "over_1": 0,
+      "first_3_max": 0.0994
+    },
+    "e.h.first_cell": {
+      "run": "e-2026-10-18-ci-host",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "first run_code cell, x = 41; 20 code-interpreter-v1 sandboxes one after another on host c, no model",
+      "n": 20,
+      "unit": "s",
+      "values": [
+        0.0906,
+        0.1012,
+        0.1022,
+        0.1655,
+        0.0947,
+        0.1735,
+        0.1145,
+        0.0803,
+        0.1025,
+        0.1417,
+        0.0948,
+        0.107,
+        0.1153,
+        0.0937,
+        0.1222,
+        0.1857,
+        0.166,
+        0.1019,
+        0.1253,
+        0.1758
+      ],
+      "min": 0.0803,
+      "max": 0.1857,
+      "under_0_1": 5,
+      "over_1": 0,
+      "first_3_max": 0.1022
+    },
+    "e.h.warm_cell": {
+      "run": "e-2026-10-18-ci-host",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "next cell, x += 1; 20 code-interpreter-v1 sandboxes one after another on host c, no model",
+      "n": 20,
+      "unit": "s",
+      "values": [
+        0.0085,
+        0.0085,
+        0.0106,
+        0.043,
+        0.0105,
+        0.0477,
+        0.0182,
+        0.0079,
+        0.0084,
+        0.0108,
+        0.0085,
+        0.0076,
+        0.009,
+        0.0235,
+        0.0181,
+        0.0096,
+        0.0081,
+        0.0094,
+        0.0308,
+        0.0246
+      ],
+      "min": 0.0076,
+      "max": 0.0477,
+      "under_0_1": 20,
+      "over_1": 0,
+      "first_3_max": 0.0106
+    },
+    "e.h.pause": {
+      "run": "e-2026-10-18-ci-host",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "beta_pause until it returns; 20 code-interpreter-v1 sandboxes one after another on host c, no model",
+      "n": 20,
+      "unit": "s",
+      "values": [
+        0.1384,
+        2.9902,
+        0.5346,
+        3.0676,
+        0.8738,
+        0.6214,
+        3.1518,
+        1.0741,
+        0.6557,
+        1.4784,
+        0.6664,
+        1.7981,
+        1.3621,
+        1.8481,
+        3.2733,
+        2.034,
+        0.562,
+        1.471,
+        1.7353,
+        3.0589
+      ],
+      "min": 0.1384,
+      "max": 3.2733,
+      "under_0_1": 0,
+      "over_1": 13,
+      "first_3_max": 2.9902
+    },
+    "e.h.resume": {
+      "run": "e-2026-10-18-ci-host",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "Sandbox.connect, after a 5 s wait, until it returns; 20 code-interpreter-v1 sandboxes one after another on host c, no model",
+      "n": 20,
+      "unit": "s",
+      "values": [
+        0.5512,
+        0.378,
+        0.4033,
+        5.3059,
+        6.2987,
+        6.397,
+        4.8377,
+        5.5437,
+        7.3342,
+        5.375,
+        10.2404,
+        4.6769,
+        5.9068,
+        4.9924,
+        3.8411,
+        4.7003,
+        8.0779,
+        4.9066,
+        6.1575,
+        4.6116
+      ],
+      "min": 0.378,
+      "max": 10.2404,
+      "under_0_1": 0,
+      "over_1": 17,
+      "first_3_max": 0.5512
+    },
+    "e.h.cell_after_resume": {
+      "run": "e-2026-10-18-ci-host",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "print(x) after resume; 20 code-interpreter-v1 sandboxes one after another on host c, no model",
+      "n": 20,
+      "unit": "s",
+      "values": [
+        0.0804,
+        0.0737,
+        0.0824,
+        0.1315,
+        0.05,
+        0.0436,
+        0.0709,
+        0.0621,
+        0.1052,
+        0.0665,
+        0.0582,
+        0.066,
+        0.1655,
+        0.126,
+        0.1523,
+        0.0503,
+        0.0645,
+        0.1202,
+        0.2053,
+        0.0712
+      ],
+      "min": 0.0436,
+      "max": 0.2053,
+      "under_0_1": 13,
+      "over_1": 0,
+      "first_3_max": 0.0824
+    },
+    "e.h.state_kept": {
+      "run": "e-2026-10-18-ci-host",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "x set before beta_pause read back as 42 after Sandbox.connect",
+      "n": 20,
+      "unit": "cycles",
+      "count": 20
+    },
+    "e.h.reserve": {
+      "run": "e-2026-10-18-ci-host",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "2 MiB hugepages taken (total - free + reserved) after each code-interpreter-v1 sandbox created on host c, until a create was refused",
+      "n": 1,
+      "unit": "pages",
+      "pool": 4096,
+      "held_by_others": 75,
+      "per_sandbox": 1024,
+      "fit": 3,
+      "refused_at": 4,
+      "refused_s": 0.217,
+      "taken": [
+        1099,
+        2123,
+        3147
+      ],
+      "taken_before": 75,
+      "create_s": [
+        0.22,
+        0.135,
+        0.08
+      ],
+      "mem_available_mb": [
+        5634,
+        5628,
+        5623,
+        5631
+      ]
+    },
+    "e.m.a.create": {
+      "run": "e-2026-10-18-ci-multi",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "Sandbox.create until it returns, code-interpreter-v1 on host a",
+      "n": 3,
+      "unit": "s",
+      "values": [
+        10.53,
+        0.09,
+        0.22
+      ],
+      "min": 0.09,
+      "max": 10.53,
+      "median": 0.22
+    },
+    "e.m.a.first": {
+      "run": "e-2026-10-18-ci-multi",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "first Prompt Agent turn, code-interpreter-v1 on host a",
+      "n": 3,
+      "unit": "s",
+      "values": [
+        2.95,
+        2.65,
+        2.5
+      ],
+      "min": 2.5,
+      "max": 2.95,
+      "median": 2.65
+    },
+    "e.m.a.cold": {
+      "run": "e-2026-10-18-ci-multi",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "create + first Prompt Agent turn, added per run, code-interpreter-v1 on host a",
+      "n": 3,
+      "unit": "s",
+      "values": [
+        13.48,
+        2.74,
+        2.72
+      ],
+      "min": 2.72,
+      "max": 13.48,
+      "median": 2.74
+    },
+    "e.m.a.warm": {
+      "run": "e-2026-10-18-ci-multi",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "follow-up turn, code-interpreter-v1 on host a",
+      "n": 3,
+      "unit": "s",
+      "values": [
+        3.03,
+        4.02,
+        2.59
+      ],
+      "min": 2.59,
+      "max": 4.02,
+      "median": 3.03
+    },
+    "e.m.a.pause": {
+      "run": "e-2026-10-18-ci-multi",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "beta_pause until it returns, code-interpreter-v1 on host a",
+      "n": 3,
+      "unit": "s",
+      "values": [
+        2.08,
+        0.16,
+        0.15
+      ],
+      "min": 0.15,
+      "max": 2.08,
+      "median": 0.16
+    },
+    "e.m.a.resume": {
+      "run": "e-2026-10-18-ci-multi",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "Sandbox.connect until it returns, code-interpreter-v1 on host a",
+      "n": 3,
+      "unit": "s",
+      "values": [
+        0.39,
+        1.46,
+        0.38
+      ],
+      "min": 0.38,
+      "max": 1.46,
+      "median": 0.39
+    },
+    "e.m.a.first_after_resume": {
+      "run": "e-2026-10-18-ci-multi",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "first turn after resume, code-interpreter-v1 on host a",
+      "n": 3,
+      "unit": "s",
+      "values": [
+        3.91,
+        2.68,
+        3.36
+      ],
+      "min": 2.68,
+      "max": 3.91,
+      "median": 3.36
+    },
+    "e.m.a.recover": {
+      "run": "e-2026-10-18-ci-multi",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "connect + first turn after resume, added per run, code-interpreter-v1 on host a",
+      "n": 3,
+      "unit": "s",
+      "values": [
+        4.3,
+        4.14,
+        3.74
+      ],
+      "min": 3.74,
+      "max": 4.3,
+      "median": 4.14
+    },
+    "e.m.a.state_kept": {
+      "run": "e-2026-10-18-ci-multi",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "sandbox history grew 1, 2, 3, 4 across pause and resume, code-interpreter-v1 on host a",
+      "n": 3,
+      "unit": "runs",
+      "count": 3
+    },
+    "e.m.one_host": {
+      "run": "e-2026-10-18-ci-multi",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "4 sessions at once on host a alone, code-interpreter-v1",
+      "n": 4,
+      "unit": "sessions",
+      "answered": 3,
+      "refused": 1,
+      "per_host": {
+        "a": {
+          "sessions": 4,
+          "answered": 3
+        }
+      },
+      "create_s": [
+        0.279,
+        0.282,
+        0.31
+      ],
+      "session_s": [
+        6.131,
+        8.164,
+        6.895
+      ],
+      "wall_s": 8.354,
+      "model_http_statuses": {
+        "200": 12
+      }
+    },
+    "e.m.two_hosts": {
+      "run": "e-2026-10-18-ci-multi",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "4 sessions at once on each of hosts a and c, spread by the client, code-interpreter-v1",
+      "n": 8,
+      "unit": "sessions",
+      "answered": 6,
+      "refused": 2,
+      "per_host": {
+        "a": {
+          "sessions": 4,
+          "answered": 3
+        },
+        "c": {
+          "sessions": 4,
+          "answered": 3
+        }
+      },
+      "create_s": [
+        0.245,
+        0.256,
+        0.242,
+        0.25,
+        0.246,
+        0.265
+      ],
+      "session_s": [
+        5.246,
+        5.508,
+        6.963,
+        6.241,
+        6.898,
+        7.128
+      ],
+      "wall_s": 7.194,
+      "model_http_statuses": {
+        "200": 24
+      }
+    },
+    "e.m.hostloss": {
+      "run": "e-2026-10-18-ci-multi",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "host a's E2B stack stopped with docker compose stop (VM running), then started again; code-interpreter-v1",
+      "n": 1,
+      "unit": "read-back",
+      "other_live_session": true,
+      "other_live_session_s": 2.77,
+      "other_new_session_s": 2.427,
+      "lost_paused_from_other": false,
+      "lost_create": false,
+      "own_paused_after_restart": true,
+      "own_paused_after_restart_s": 4.78,
+      "running_before_stop_after_restart": false,
+      "new_session_after_restart_s": 4.287,
+      "stop_s": 77.86,
+      "start_s": 63.14
+    },
+    "e.s.isolation": {
+      "run": "e-2026-10-18-ci-scale",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "the same read-back on host d, a Standard_D8ds_v7 with another host kernel",
+      "n": 1,
+      "unit": "read-back",
+      "vmm_type": "firecracker",
+      "firecracker_version": "v1.14-0.2.0",
+      "guest_kernel": "6.1.177+",
+      "host_kernel": "6.17.0-1022-azure",
+      "guest_cpus": 2,
+      "guest_mem_total_mb": 1982,
+      "template_memory_mb": 2048
+    },
+    "e.s.d_cold": {
+      "run": "e-2026-10-18-ci-scale",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "new session until the answer, D-matched 5-run cold protocol, code-interpreter-v1 on host d",
+      "n": 5,
+      "unit": "s",
+      "values": [
+        3.149,
+        2.377,
+        2.673,
+        2.378,
+        2.658
+      ],
+      "min": 2.377,
+      "max": 3.149,
+      "median": 2.658
+    },
+    "e.s.d_sandbox_ready": {
+      "run": "e-2026-10-18-ci-scale",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "code-interpreter-v1 sandbox created until Ready during the 5 cold sessions on host d",
+      "n": 5,
+      "unit": "s",
+      "values": [
+        0.242,
+        0.068,
+        0.062,
+        0.07,
+        0.06
+      ],
+      "min": 0.06,
+      "max": 0.242,
+      "median": 0.068
+    },
+    "e.s.d_agent_turn": {
+      "run": "e-2026-10-18-ci-scale",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "Prompt Agent turn after sandbox Ready during the 5 cold sessions on host d",
+      "n": 5,
+      "unit": "s",
+      "values": [
+        2.83,
+        2.26,
+        2.56,
+        2.26,
+        2.55
+      ],
+      "min": 2.26,
+      "max": 2.83,
+      "median": 2.55
+    },
+    "e.s.d_warm": {
+      "run": "e-2026-10-18-ci-scale",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "follow-up turns in the same session, D-matched warm protocol, code-interpreter-v1 on host d",
+      "n": 3,
+      "unit": "s",
+      "values": [
+        2.28,
+        2.76,
+        33.32
+      ],
+      "min": 2.28,
+      "max": 33.32,
+      "median": 2.76,
+      "tool_s": [
+        0.013,
+        0.01,
+        0.009
+      ]
+    },
+    "e.s.c4": {
+      "run": "e-2026-10-18-ci-scale",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "4 new sessions at once on host d, code-interpreter-v1",
+      "n": 4,
+      "unit": "sessions",
+      "answered": 4,
+      "refused": 0,
+      "per_host": {
+        "d": {
+          "sessions": 4,
+          "answered": 4
+        }
+      },
+      "create_s": [
+        0.159,
+        0.11,
+        0.092,
+        0.12
+      ],
+      "session_s": [
+        5.073,
+        7.967,
+        5.293,
+        4.471
+      ],
+      "wall_s": 8.032,
+      "model_http_statuses": {
+        "200": 16
+      }
+    },
+    "e.s.c8": {
+      "run": "e-2026-10-18-ci-scale",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "8 new sessions at once on host d, code-interpreter-v1",
+      "n": 8,
+      "unit": "sessions",
+      "answered": 8,
+      "refused": 0,
+      "per_host": {
+        "d": {
+          "sessions": 8,
+          "answered": 8
+        }
+      },
+      "create_s": [
+        0.216,
+        0.131,
+        0.322,
+        0.105,
+        0.183,
+        0.132,
+        0.337,
+        0.181
+      ],
+      "session_s": [
+        5.148,
+        6.694,
+        10.181,
+        5.99,
+        5.323,
+        4.852,
+        5.89,
+        5.227
+      ],
+      "wall_s": 10.269,
+      "model_http_statuses": {
+        "200": 32
+      }
+    },
+    "e.s.pod_lost": {
+      "run": "e-2026-10-18-ci-scale",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "sandbox killed until a replacement code-interpreter-v1 sandbox is Ready on host d",
+      "n": 1,
+      "unit": "s",
+      "values": [
+        0.063
+      ],
+      "value": 0.063
+    },
+    "e.s.other_session_followup": {
+      "run": "e-2026-10-18-ci-scale",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "follow-up on a different live session after the sandbox kill on host d; that session kept LANTERN-7",
+      "n": 1,
+      "unit": "s",
+      "values": [
+        3.5
+      ],
+      "value": 3.5
+    },
+    "e.s.reserve": {
+      "run": "e-2026-10-18-ci-scale",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "2 MiB hugepages taken after each code-interpreter-v1 sandbox created on host d, until a create was refused",
+      "n": 1,
+      "unit": "pages",
+      "pool": 8448,
+      "held_by_others": 0,
+      "per_sandbox": 1024,
+      "fit": 8,
+      "refused_at": 9,
+      "refused_s": 0.047,
+      "taken": [
+        1024,
+        2048,
+        3072,
+        4096,
+        5120,
+        6144,
+        7168,
+        8192
+      ],
+      "taken_before": 1024,
+      "create_s": [
+        0.05,
+        0.05,
+        0.053,
+        0.052,
+        0.057,
+        0.056,
+        0.062,
+        0.06
+      ],
+      "mem_available_mb": [
+        11899,
+        11895,
+        11887,
+        11879,
+        11891,
+        11887,
+        11887,
+        11885,
+        11875
+      ]
+    },
+    "e.s.setup": {
+      "run": "e-2026-10-18-ci-scale",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "README step 7 on a new Standard_D8ds_v7: Docker Engine, Compose up, project_limits row and 300 s wait, clone and build environment, code-interpreter-v1 build",
+      "n": 1,
+      "unit": "s",
+      "value": 1494,
+      "parts": [
+        42,
+        215,
+        301,
+        7,
+        929
+      ],
+      "build_steps": 30,
+      "builder_reported": "15m26s"
     },
     "a.c4": {
       "run": "a-2026-10-18-scale",

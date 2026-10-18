@@ -760,6 +760,172 @@ def build(runs: dict[str, dict], index: dict[str, str]) -> dict:
          "cached_through": built[0]["cached_steps"][1], "steps": built[0]["steps"]},
         "unchanged build_prod.py against host c with the three raised settings of host a; no change between attempts")
 
+    # E · 2026-10-18, code-interpreter-v1 only: host mode on host c, two hosts (a and c), and a D8ds_v7 (host d)
+    def readback(doc: dict) -> dict:
+        iso = doc["isolation"]
+        vmm, info = iso["vmm_processes"], iso["sandbox_info"]
+        if "error" in iso or iso["sandbox_deleted"] is not True or not vmm \
+                or not all(p.rsplit("/", 1)[-1] == "firecracker" and "/fc-versions/" in p for p in vmm):
+            raise BuildError(f"{doc['run_id']}: no Firecracker process behind the sandbox, or its sandbox was left")
+        versions = {p.split("/fc-versions/")[1].split("/")[0] for p in vmm}
+        if len(versions) != 1 or info["template_name"] != doc["template"]["name"] or info["cpu_count"] != iso["guest_cpus"]:
+            raise BuildError(f"{doc['run_id']}: the read-back does not match one Firecracker version and the template")
+        return {"n": 1, "unit": "read-back", "vmm_type": "firecracker", "firecracker_version": versions.pop(),
+                "guest_kernel": iso["guest_kernel"], "host_kernel": iso["host_kernel"], "guest_cpus": iso["guest_cpus"],
+                "guest_mem_total_mb": iso["guest_mem_total_mb"], "template_memory_mb": info["memory_mb"]}
+
+    def reserved(doc: dict) -> dict:
+        r = doc["reservation"]
+        steps = r["steps"]
+        taken = [s["hugepages_total"] - s["hugepages_free"] + s["hugepages_rsvd"] for s in steps]
+        per = {b - a for a, b in zip(taken, taken[1:])}
+        if "error" in r or not steps or not all(s["check_ok"] for s in steps) or len(per) != 1:
+            raise BuildError(f"{doc['run_id']}: a reservation step failed its check or the pages per sandbox vary")
+        page = per.pop()
+        if page * 2 != doc["template"]["memory_mb"]:
+            raise BuildError(f"{doc['run_id']}: {page} 2 MiB pages per sandbox is not the template's memory")
+        held, pool, refused = taken[0] - page, steps[0]["hugepages_total"], r.get("refused") or {}
+        if refused.get("at") != len(steps) + 1 or "Failed to place sandbox" not in refused.get("message", ""):
+            raise BuildError(f"{doc['run_id']}: the creates did not end in one refused placement")
+        if (pool - held) // page != len(steps):
+            raise BuildError(f"{doc['run_id']}: the sandboxes that fit differ from the free pages / pages per sandbox")
+        after = r["after"]
+        if r["sandboxes_deleted"] is not True or after["hugepages_total"] - after["hugepages_free"] + \
+                after["hugepages_rsvd"] != held:
+            raise BuildError(f"{doc['run_id']}: the sandboxes were not deleted or their pages did not return")
+        before = r["before"]
+        return {"n": 1, "unit": "pages", "pool": pool, "held_by_others": held, "per_sandbox": page,
+                "fit": len(steps), "refused_at": refused["at"], "refused_s": refused["seconds"], "taken": taken,
+                "taken_before": before["hugepages_total"] - before["hugepages_free"] + before["hugepages_rsvd"],
+                "create_s": [s["create_s"] for s in steps],
+                "mem_available_mb": [before["mem_available_mb"]] + [s["mem_available_mb"] for s in steps]}
+
+    def at_once_ci(level: dict, where: str) -> dict:
+        ss = level["sessions"]
+        per_host: dict[str, dict] = {}
+        for s in ss:
+            h = per_host.setdefault(s["host"], {"sessions": 0, "answered": 0})
+            h["sessions"] += 1
+            h["answered"] += s.get("remembered") is True
+        ok = [s for s in ss if s.get("remembered") is True]
+        refused = [s for s in ss if s.get("remembered") is not True]
+        if len(ss) != level["sessions_at_once"] or len(ok) != level["answered"] or per_host != level["per_host"]:
+            raise BuildError(f"E {where}: counts differ from the session records")
+        if any(s["turn2"]["answer"] != f"SCALE-{s['slot']}" for s in ok):
+            raise BuildError(f"E {where}: a remembered flag differs from its answer")
+        if not all("Failed to place sandbox" in s.get("error", "") for s in refused):
+            raise BuildError(f"E {where}: a session failed for another reason than a refused sandbox")
+        if any(s["sandbox_deleted"] is not True or s["conversation_deleted"] is not True for s in ss):
+            raise BuildError(f"E {where}: a session left its sandbox or conversation")
+        return {"n": len(ss), "unit": "sessions", "answered": len(ok), "refused": len(refused), "per_host": per_host,
+                "create_s": [s["sandbox_create_to_ready_s"] for s in ok], "session_s": [s["session_s"] for s in ok],
+                "wall_s": level["wall_s"], "model_http_statuses": level["model_http_statuses"]}
+
+    hc = runs["e-e2b-2026-10-18/ci-host.json"]
+    hrid = hc["run_id"]
+    if hc["leftover_sandboxes"] != 0:
+        raise BuildError(f"{hrid}: a sandbox was left")
+    put("e.h.isolation", hrid, "LOCAL_MEASUREMENT", readback(hc),
+        "Firecracker process behind a code-interpreter-v1 sandbox in host c's process list; kernel, vCPUs and "
+        "MemTotal read inside it with run_code; uname -r on the host")
+    bench = hc["bench"]["runs"]
+    if len(bench) != 20 or any("error" in r or r["state_kept"] is not True or r["sandbox_deleted"] is not True
+                               for r in bench):
+        raise BuildError(f"{hrid}: expected 20 cycles that read x back as 42 and deleted their sandbox")
+    for key, what in (("create", "Sandbox.create until it returns"), ("first_cell", "first run_code cell, x = 41"),
+                      ("warm_cell", "next cell, x += 1"), ("pause", "beta_pause until it returns"),
+                      ("resume", "Sandbox.connect, after a 5 s wait, until it returns"),
+                      ("cell_after_resume", "print(x) after resume")):
+        vals = [r[f"{key}_s"] for r in bench]
+        put(f"e.h.{key}", hrid, "LOCAL_MEASUREMENT",
+            {**stat(vals), "under_0_1": sum(v < 0.1 for v in vals), "over_1": sum(v > 1 for v in vals),
+             "first_3_max": max(vals[:3])},
+            f"{what}; 20 code-interpreter-v1 sandboxes one after another on host c, no model")
+    put("e.h.state_kept", hrid, "LOCAL_MEASUREMENT",
+        {"n": len(bench), "unit": "cycles", "count": sum(r["state_kept"] is True for r in bench)},
+        "x set before beta_pause read back as 42 after Sandbox.connect")
+    put("e.h.reserve", hrid, "LOCAL_MEASUREMENT", reserved(hc),
+        "2 MiB hugepages taken (total - free + reserved) after each code-interpreter-v1 sandbox created on host c, "
+        "until a create was refused")
+
+    cm = runs["e-e2b-2026-10-18/ci-multi.json"]
+    cmid = cm["run_id"]
+    if cm["leftover_sandboxes"] != 0 or cm["agent_versions_deleted"] is not True:
+        raise BuildError(f"{cmid}: left a sandbox or an agent version")
+    e_agent_runs(cmid, "e.m.a", cm["agent_runs_host_a"], "code-interpreter-v1 on host a")
+    put("e.m.one_host", cmid, "LOCAL_MEASUREMENT", at_once_ci(cm["one_host"], "host a alone"),
+        "4 sessions at once on host a alone, code-interpreter-v1")
+    put("e.m.two_hosts", cmid, "LOCAL_MEASUREMENT", at_once_ci(cm["two_hosts"], "hosts a and c"),
+        "4 sessions at once on each of hosts a and c, spread by the client, code-interpreter-v1")
+    hl = cm["host_loss"]
+    c_after, a_after, a_back = hl["after_loss"]["c"], hl["after_loss"]["a"], hl["after_restart"]["a"]
+    if hl["stop"]["exit_code"] != 0 or hl["start"]["exit_code"] != 0 or hl["start"]["health_up"]["status"] != 200:
+        raise BuildError(f"{cmid}: stopping or starting host a's stack failed")
+    if hl["left_after_cleanup"] != {"a": 0, "c": 0} or hl["conversations_deleted"] is not True:
+        raise BuildError(f"{cmid}: sandboxes or conversations left after the host stop")
+    put("e.m.hostloss", cmid, "LOCAL_MEASUREMENT", {
+        "n": 1, "unit": "read-back",
+        "other_live_session": c_after["live_session_read"]["ok"] and c_after["live_session_read"]["value"] == "LANTERN-7",
+        "other_live_session_s": c_after["live_session_read"]["seconds"],
+        "other_new_session_s": c_after["new_session"]["value"]["wall_s"],
+        "lost_paused_from_other": c_after["connect_lost_hosts_paused_sandbox"]["ok"],
+        "lost_create": a_after["create"]["ok"],
+        "own_paused_after_restart": a_back["resume_own_paused_sandbox"]["ok"],
+        "own_paused_after_restart_s": a_back["resume_own_paused_sandbox"]["seconds"],
+        "running_before_stop_after_restart": a_back["live_sandbox_before_loss"]["ok"],
+        "new_session_after_restart_s": a_back["new_session"]["value"]["wall_s"],
+        "stop_s": hl["stop"]["seconds"], "start_s": hl["start"]["seconds"]},
+        "host a's E2B stack stopped with docker compose stop (VM running), then started again; code-interpreter-v1")
+
+    cs = runs["e-e2b-2026-10-18/ci-scale.json"]
+    csid = cs["run_id"]
+    if cs["leftover_sandboxes"] != 0 or cs["agent_version_deleted"] is not True:
+        raise BuildError(f"{csid}: left a sandbox or the agent version")
+    put("e.s.isolation", csid, "LOCAL_MEASUREMENT", readback(cs),
+        "the same read-back on host d, a Standard_D8ds_v7 with another host kernel")
+    scold = cs["cold"]
+    if len(scold) != 5 or not all(t["http"] == 200 and t["correct"] for t in scold):
+        raise BuildError(f"{csid}: expected 5 answered, correct new sessions")
+    if any(t["sandbox_create_to_ready_s"] > t["wall_s"] for t in scold):
+        raise BuildError(f"{csid}: sandbox create-to-Ready exceeds the session wall time")
+    put("e.s.d_cold", csid, "LOCAL_MEASUREMENT", stat([t["wall_s"] for t in scold]),
+        "new session until the answer, D-matched 5-run cold protocol, code-interpreter-v1 on host d")
+    put("e.s.d_sandbox_ready", csid, "LOCAL_MEASUREMENT", stat([t["sandbox_create_to_ready_s"] for t in scold]),
+        "code-interpreter-v1 sandbox created until Ready during the 5 cold sessions on host d")
+    put("e.s.d_agent_turn", csid, "LOCAL_MEASUREMENT", stat([t["agent_turn_s"] for t in scold]),
+        "Prompt Agent turn after sandbox Ready during the 5 cold sessions on host d")
+    swarm = cs["warm"]["turns"]
+    if (not cs["warm"]["remembered"] or len(swarm) != 4 or swarm[1]["answer"] != "LANTERN-7"
+            or any(t["http"] != 200 for t in swarm)):
+        raise BuildError(f"{csid}: expected 4 answered warm turns that remember LANTERN-7")
+    put("e.s.d_warm", csid, "LOCAL_MEASUREMENT",
+        {**stat([t["wall_s"] for t in swarm[1:]]), "tool_s": [t["sandbox_tool_s"] for t in swarm[1:]]},
+        "follow-up turns in the same session, D-matched warm protocol, code-interpreter-v1 on host d")
+    for lv in cs["at_once"]:
+        n = lv["sessions_at_once"]
+        put(f"e.s.c{n}", csid, "LOCAL_MEASUREMENT", at_once_ci(lv, f"host d, {n} at once"),
+            f"{n} new sessions at once on host d, code-interpreter-v1")
+    rec = cs["recovery"]
+    live = rec["followup_on_live_session"]
+    if not live["state_preserved"] or live["answer"] != "LANTERN-7" or live["http"] != 200:
+        raise BuildError(f"{csid}: the live session used after the sandbox kill did not keep LANTERN-7")
+    put("e.s.pod_lost", csid, "LOCAL_MEASUREMENT", single(rec["replacement_ready_s"]),
+        "sandbox killed until a replacement code-interpreter-v1 sandbox is Ready on host d")
+    put("e.s.other_session_followup", csid, "LOCAL_MEASUREMENT", single(live["wall_s"]),
+        "follow-up on a different live session after the sandbox kill on host d; that session kept LANTERN-7")
+    put("e.s.reserve", csid, "LOCAL_MEASUREMENT", reserved(cs),
+        "2 MiB hugepages taken after each code-interpreter-v1 sandbox created on host d, until a create was refused")
+    it, built = cs["install"]["install_time"], cs["install"]["build"]
+    parts = [it["docker_engine_s"], it["compose_up_s"], it["project_limits_row_and_wait_s"],
+             it["clone_and_build_env_s"], it["template_build_s"]]
+    if built["exit_code"] != 0 or built["attempts"] != 1 or sum(parts) != it["total_s"]:
+        raise BuildError(f"{csid}: the build did not pass on its one attempt, or the install parts do not add up")
+    put("e.s.setup", csid, "LOCAL_MEASUREMENT",
+        {"n": 1, "unit": "s", "value": it["total_s"], "parts": parts, "build_steps": built["steps"],
+         "builder_reported": built["builder_reported"]},
+        "README step 7 on a new Standard_D8ds_v7: Docker Engine, Compose up, project_limits row and 300 s wait, "
+        "clone and build environment, code-interpreter-v1 build")
+
     # A · 2026-10-18, 4 and 8 sandboxes at once with the full specification
     asc = runs["a-aca-2026-10-18/scale.json"]
     rid = asc["run_id"]
