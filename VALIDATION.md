@@ -51,7 +51,7 @@ A's cold is `create_total_s + first.guest_s` and resume-to-answer is `resume_tot
 | `ask` | `sandbox.exec("python3 -c …")`, which POSTs `{"query": …}` to `http://127.0.0.1:8080/reflect` and times it inside |
 | `stop`, `resume`, `delete` | `sandbox.stop()` / `resume()` and poll; `delete_sandbox(id)` |
 
-[`tools/measure_aca.py`](tools/measure_aca.py) repeats the 2026-10-09 protocol: `agent` mode runs create → answer → answer → stop → resume → answer → answer → delete per run and fails if conversation-history lengths do not keep growing; `create` mode times each configuration (`builtin`, `image`, `vnet`, `port`, `vnetvolume`, `full`) and records whether guest uptime after resume exceeds its pre-stop value. Uptime alone does not prove process-memory continuity; the retained `process_survived` field is a legacy name for that observation. `scale` mode creates the sandboxes of each `--scale` level at the same time with the full specification; each asks D's and E's two concurrency questions and counts as answered when its second answer names its own word, and every sandbox is deleted before the next level (`a-2026-10-18-scale`).
+[`tools/measure_aca.py`](tools/measure_aca.py) repeats the 2026-10-09 protocol: `agent` mode runs create → answer → answer → stop → resume → answer → answer → delete per run and fails if conversation-history lengths do not keep growing (`--config novolume` runs the same without the Blob volume, `a-2026-10-18-novolume`); every request first waits inside the sandbox until the agent accepts a connection on port 8080, and that wait is counted in the cold time; `create` mode times each configuration (`builtin`, `image`, `vnet`, `port`, `vnetvolume`, `full`, `novolume`) and records whether guest uptime after resume exceeds its pre-stop value. Uptime alone does not prove process-memory continuity; the retained `process_survived` field is a legacy name for that observation. `scale` mode creates the sandboxes of each `--scale` level at the same time with the full specification; each asks D's and E's two concurrency questions and counts as answered when its second answer names its own word, and every sandbox is deleted before the next level (`a-2026-10-18-scale`).
 
 [`tools/measure_responses.py`](tools/measure_responses.py) (B and D) POSTs `{"input": …}` to `AGENT_RESPONSES_URL` with an Azure CLI token for `https://ai.azure.com` and adds `previous_response_id` for follow-ups. Token acquisition is outside the request timer; it refreshes before each concurrency level and recovery. With `--observe`, it accepts only one new Ready Kata pod as a candidate; ambiguity or a failed pod read is a failure, not a placement result. Run this observation in a quiet project namespace. `--recovery` deletes the one newly observed Kata pod, waits for deletion to finish, then follows up using that session's response ID. Exit 0 requires every requested cold, warm, concurrency and recovery check to pass; skipped recovery, deletion failure and forgotten state return exit 1. With `RESPONSES_AUTH_HEADER` (`Header-Name: value`, for example an API Management key) it sends that header instead of the token, as in `b-2026-10-18-perf`; the value is never printed or written.
 
@@ -221,6 +221,44 @@ Every sandbox's second answer was its own `SCALE-<k>`; `vmm_type` `cloudhypervis
 - One run per level from one client. 8 sandboxes are 8 active cores, far below the default quota of 500, so this does not probe the limit.
 - Create times are SDK wall time on a client in Japan East; the 2026-10-09 runs came from a workstation in China.
 - Each sandbox wrote its own small state file (named after the sandbox) to the shared Blob container, as earlier A runs did; those files were left there.
+
+### a-2026-10-18-novolume: the full agent path without the Blob volume, 3 runs
+
+**Question.** Without the private Blob volume, how long does a new sandbox take to its first answer, and does the conversation survive stop and resume on the Memory snapshot alone?
+
+**Input.** [`tools/measure_aca.py`](tools/measure_aca.py) `agent --runs 3 --config novolume` against the sandbox group and disk image of `a-2026-10-09-agent` ([`evidence/runs/a-aca-2026-10-18/agent-novolume.json`](evidence/runs/a-aca-2026-10-18/agent-novolume.json)), with these exact inputs:
+
+<!-- BEGIN GENERATED: a-nv-input -->
+> Configuration: custom agent disk image + VNet + OnDemand port, no Blob volume; cpu 1000m, memory 2048Mi, auto-suspend 900 s in Memory mode.
+> Request: POST http://127.0.0.1:8080/reflect {"query": <input>}, sent with sandbox exec from inside the sandbox, after 127.0.0.1:8080 accepts a connection.
+> First answer: "Where is Bangkok? Answer in one short sentence."
+> Every later turn: "How many questions have I asked before this one? Number only."
+<!-- END GENERATED: a-nv-input -->
+
+**Varied and fixed.** Only the Blob volume was removed. The image, VNet connection, port, `cpu`, `memory`, Memory-mode suspend, questions and the agent's state path (`STATE_MOUNT_PATH`, now a folder on the sandbox's own disk) were those of `a-2026-10-09-agent`. The client was a Windows VM in Japan East (WSL Ubuntu); the 2026-10-09 runs came from a workstation in China.
+
+**Result.**
+
+<!-- BEGIN GENERATED: a-nv -->
+Seconds; answers are the agent's replies in order. Totals are added per run before taking the median; the independently reported column medians must not be added. Wait for the agent: inside the sandbox, until it accepted a connection on port 8080, before the first request; part of Cold. The same wait before the answer after resume was 0 s in every run and is part of Resume → answer.
+
+| Run | Create → Running | Wait for the agent | First answer | Cold | Follow-up | Stop | Resume | Answer after resume | Resume → answer | Answers |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|
+| 1 | 2.15 | 0.0 | 5.96 | 8.11 | 1.02 | 20.23 | 1.22 | 1.74 | 2.96 | Bangkok is the capital city of Thailand in Southeast Asia. / 2 / 3 / 4 |
+| 2 | 1.35 | 0.0 | 3.51 | 4.86 | 0.84 | 10.67 | 4.46 | 2.32 | 6.78 | Bangkok is the capital city of Thailand in Southeast Asia. / 2 / 3 / 4 |
+| 3 | 1.22 | 0.0 | 3.13 | 4.35 | 0.67 | 9.88 | 0.82 | 1.88 | 2.7 | Bangkok is the capital city of Thailand in Southeast Asia. / 2 / 3 / 4 |
+| **median** | **1.35** | **0.0** | **3.51** | **4.86** | **0.84** | **10.67** | **1.22** | **1.88** | **2.96** |  |
+<!-- END GENERATED: a-nv -->
+
+Without the volume the conversation kept growing across stop and resume in <!--v:a.nv.state_kept.count-->3<!--/v--> of <!--v:a.nv.state_kept.n-->3<!--/v--> runs: the agent's state file stayed on the sandbox disk, and the Memory snapshot kept it. Compared with `a-2026-10-09-agent`, cold start fell from <!--v:a.cold.median-->28.0<!--/v--> s to <!--v:a.nv.cold.median-->4.86<!--/v--> s and resume → answer from <!--v:a.recover.median-->14.45<!--/v--> s to <!--v:a.nv.recover.median-->2.96<!--/v--> s. The first difference is create (<!--v:a.create.median-->24.25<!--/v--> s against <!--v:a.nv.create.median-->1.35<!--/v--> s); the second is the first answer after resume, timed inside the sandbox (<!--v:a.first_after_resume.median-->12.84<!--/v--> s against <!--v:a.nv.first_after_resume.median-->1.88<!--/v--> s).
+
+**Boundary.**
+- Three runs with explicit stop and resume; auto-suspend after 900 s idle was not waited for.
+- The record shows where the extra time after resume is (inside the sandbox, in the first answer), not why; that it comes from the Blob mount is an inference from this difference.
+- Stop took longer without the volume (<!--v:a.nv.stop.median-->10.67<!--/v--> s against <!--v:a.stop.median-->7.56<!--/v--> s median, one stop <!--v:a.nv.stop.max-->20.23<!--/v--> s); the record does not show why.
+- Without the volume, Running can come before the agent listens. Before these three runs, a smoke run and a first set of three ran with a tool revision that sent the first request as soon as the sandbox read Running: <!--v:a.nv.earlier.count-->3<!--/v--> of <!--v:a.nv.earlier.n-->4<!--/v--> completed (cold <!--v:a.nv.earlier_cold.range-->4.33–5.03<!--/v--> s, resume → answer <!--v:a.nv.earlier_recover.range-->2.57–10.67<!--/v--> s), and in the other one the first request was refused <!--v:a.nv.refused_after.value-->2.18<!--/v--> s after create because the agent was not listening yet. The tool now waits inside the sandbox until the agent accepts a connection and counts that wait in the cold time. All of them are in the record (`earlier_attempts`).
+- The state then lives only in that sandbox. Deleting the sandbox, or reading the state from another sandbox, was not tested.
+- Create, stop and resume are SDK wall time on the client, which was in Japan East here and in China on 2026-10-09; the answers are timed inside the sandbox on both days.
 
 ### b-2026-09-27: Foundry hosted agent, deploy and two routes to the model
 
@@ -972,6 +1010,7 @@ These are unit, type, sample-count and timeline checks, not a universal maximum-
 cd "$HOSTING_REPO"
 set -a && . ./.env && set +a
 python tools/measure_aca.py agent --runs 3
+python tools/measure_aca.py agent --runs 3 --config novolume
 python tools/measure_aca.py scale --scale 4,8
 python tools/measure_responses.py --cold 3 --warm-turns 3
 python tools/measure_responses.py --cold 3 --warm-turns 3 --scale 4,8 --recovery --observe
@@ -1030,7 +1069,7 @@ Not tested here: the tools against a fresh subscription end to end after this re
 
 **Limits.**
 
-- `LOCAL_MEASUREMENT`: A full-agent latency has n=3, plus one run each of 4 and 8 sandboxes at once. B is one end-to-end run, three session-API runs, a D-protocol campaign (cold n=5, warm n=3, 4 and 8 at once) and three runs after each of two idle waits. C is one end-to-end run plus three runs without and three with the Blob PVC (pod loss and suspend/resume included) and one run each of 4 and 8 at once. D is one benchmark campaign: cached-image cold n=5, warm n=3, and one placement and one recovery observation, plus three session-API runs. Repeat with the live measurement commands in this page before relying on a number.
+- `LOCAL_MEASUREMENT`: A full-agent latency has n=3 with the Blob volume and n=3 without it, plus one run each of 4 and 8 sandboxes at once. B is one end-to-end run, three session-API runs, a D-protocol campaign (cold n=5, warm n=3, 4 and 8 at once) and three runs after each of two idle waits. C is one end-to-end run plus three runs without and three with the Blob PVC (pod loss and suspend/resume included) and one run each of 4 and 8 at once. D is one benchmark campaign: cached-image cold n=5, warm n=3, and one placement and one recovery observation, plus three session-API runs. Repeat with the live measurement commands in this page before relying on a number.
 - `LOCAL_MEASUREMENT`: A and C use the workshop reflection agent; B uses its Agent Framework agent with ResponsesHostServer; D uses the private-preview sample. B's 2026-09-27 run and D include the Foundry endpoint and a client in China (round trip <!--v:d.client_rtt.range-->320–800<!--/v--> ms); B's 2026-10-15 and 2026-10-18 runs add a client in Japan East and an API Management gateway; D's 2026-10-18 runs called the endpoint directly from Japan East; A's answers were timed inside the sandbox; C's at its LoadBalancer on 2026-09-27 and inside the pod on 2026-10-18. The rows compare field implementations, not identical containers or network paths.
 - `LOCAL_MEASUREMENT`: in A, the private Blob volume put create at <!--v:a.attr.vnetvolume.range-->15.79–25.12<!--/v--> s; image, VNet and port alone stayed at <!--v:a.attr.small.range-->1.6–2.7<!--/v--> s.
 - `LOCAL_MEASUREMENT`: the oldest D session pod was still Running at least <!--v:d.idle.value-->87<!--/v--> minutes after it was created. This is pod age, not idle duration: no last-request timestamp was retained. It establishes neither a configured idle timeout nor a continuously idle interval.

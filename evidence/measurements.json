@@ -5,6 +5,7 @@
     "a-aca-2026-10-09/agent-runs.json": "1c0df4840cc9704eb8943482335d7eb691249bc872d9809c86bd5625452bae05",
     "a-aca-2026-10-09/create-attribution.json": "ba70e60c2ceba929c5d9619092df6f9d12a25e586992ab5c33bf92f6fcb09bbf",
     "a-aca-2026-10-09/late-mount.json": "c81ac0539603589d7beb3422537c6a7f6a24994ece00db566244a29b50eeea3c",
+    "a-aca-2026-10-18/agent-novolume.json": "48c4d5b2c4e5100c95ba8e37bfde55b9a3bbc64be2c8e04e6363aaa5a2b7c311",
     "a-aca-2026-10-18/scale.json": "f0631d9f490bf165d56394d6037bbd660d67005ea1b33b60cc565ec439d5db5d",
     "abc-2026-09-27/foundation.json": "e7d733b8ad0e56dfb6acab73261d3750838ff6725b4b4352cd0e0ffb131d17f6",
     "b-hosted-agent-2026-09-27/run.json": "bae0b8e3eee47f6b62decd2f2cb63fec87b0e7ff36d6ca486c7820ae1db7e3ac",
@@ -182,6 +183,237 @@
       "unit": "runs",
       "count": 3
     },
+    "a.nv.create": {
+      "run": "a-2026-10-18-novolume",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "create call until Running, full spec without the Blob volume",
+      "n": 3,
+      "unit": "s",
+      "values": [
+        2.15,
+        1.35,
+        1.22
+      ],
+      "min": 1.22,
+      "max": 2.15,
+      "median": 1.35
+    },
+    "a.nv.cold": {
+      "run": "a-2026-10-18-novolume",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "SDK create wall time + wait until the agent accepted a connection + first answer timed inside the sandbox; a component sum, not client end-to-end wall time",
+      "n": 3,
+      "unit": "s",
+      "values": [
+        8.11,
+        4.86,
+        4.35
+      ],
+      "min": 4.35,
+      "max": 8.11,
+      "median": 4.86
+    },
+    "a.nv.first_answer": {
+      "run": "a-2026-10-18-novolume",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "first answer only, timed inside the sandbox",
+      "n": 3,
+      "unit": "s",
+      "values": [
+        5.96,
+        3.51,
+        3.13
+      ],
+      "min": 3.13,
+      "max": 5.96,
+      "median": 3.51
+    },
+    "a.nv.warm": {
+      "run": "a-2026-10-18-novolume",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "follow-up answer in the running sandbox",
+      "n": 3,
+      "unit": "s",
+      "values": [
+        1.02,
+        0.84,
+        0.67
+      ],
+      "min": 0.67,
+      "max": 1.02,
+      "median": 0.84
+    },
+    "a.nv.stop": {
+      "run": "a-2026-10-18-novolume",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "stop call until Stopped (memory snapshot)",
+      "n": 3,
+      "unit": "s",
+      "values": [
+        20.23,
+        10.67,
+        9.88
+      ],
+      "min": 9.88,
+      "max": 20.23,
+      "median": 10.67
+    },
+    "a.nv.resume": {
+      "run": "a-2026-10-18-novolume",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "resume call until Running",
+      "n": 3,
+      "unit": "s",
+      "values": [
+        1.22,
+        4.46,
+        0.82
+      ],
+      "min": 0.82,
+      "max": 4.46,
+      "median": 1.22
+    },
+    "a.nv.first_after_resume": {
+      "run": "a-2026-10-18-novolume",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "first answer after resume",
+      "n": 3,
+      "unit": "s",
+      "values": [
+        1.74,
+        2.32,
+        1.88
+      ],
+      "min": 1.74,
+      "max": 2.32,
+      "median": 1.88
+    },
+    "a.nv.recover": {
+      "run": "a-2026-10-18-novolume",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "SDK resume wall time + wait + first answer inside the sandbox; excludes stop and idle waiting",
+      "n": 3,
+      "unit": "s",
+      "values": [
+        2.96,
+        6.78,
+        2.7
+      ],
+      "min": 2.7,
+      "max": 6.78,
+      "median": 2.96
+    },
+    "a.nv.warm_after_resume": {
+      "run": "a-2026-10-18-novolume",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "next answer after that",
+      "n": 3,
+      "unit": "s",
+      "values": [
+        1.23,
+        1.36,
+        1.03
+      ],
+      "min": 1.03,
+      "max": 1.36,
+      "median": 1.23
+    },
+    "a.nv.ready_wait": {
+      "run": "a-2026-10-18-novolume",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "inside the sandbox, until the agent accepted a connection, before the first answer",
+      "n": 3,
+      "unit": "s",
+      "values": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "min": 0.0,
+      "max": 0.0,
+      "median": 0.0
+    },
+    "a.nv.ready_wait_resume": {
+      "run": "a-2026-10-18-novolume",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "the same before the answer after resume",
+      "n": 3,
+      "unit": "s",
+      "values": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "min": 0.0,
+      "max": 0.0,
+      "median": 0.0
+    },
+    "a.nv.vmm": {
+      "run": "a-2026-10-18-novolume",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "vmm_type the API reported",
+      "n": 3,
+      "unit": "runs",
+      "value": "cloudhypervisor",
+      "count": 3
+    },
+    "a.nv.state_kept": {
+      "run": "a-2026-10-18-novolume",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "conversation history length kept growing across stop and resume",
+      "n": 3,
+      "unit": "runs",
+      "count": 3
+    },
+    "a.nv.earlier": {
+      "run": "a-2026-10-18-novolume",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "earlier attempts with the tool revision that did not wait for the agent port: runs completed",
+      "n": 4,
+      "unit": "runs",
+      "count": 3
+    },
+    "a.nv.earlier_cold": {
+      "run": "a-2026-10-18-novolume",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "cold of the completed earlier attempts",
+      "n": 3,
+      "unit": "s",
+      "values": [
+        5.03,
+        4.33,
+        4.8
+      ],
+      "min": 4.33,
+      "max": 5.03,
+      "median": 4.8
+    },
+    "a.nv.earlier_recover": {
+      "run": "a-2026-10-18-novolume",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "resume → answer of the completed earlier attempts",
+      "n": 3,
+      "unit": "s",
+      "values": [
+        10.67,
+        2.73,
+        2.57
+      ],
+      "min": 2.57,
+      "max": 10.67,
+      "median": 2.73
+    },
+    "a.nv.refused_after": {
+      "run": "a-2026-10-18-novolume",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "create → Running of the earlier run whose first request was refused before the agent listened",
+      "n": 1,
+      "unit": "s",
+      "values": [
+        2.18
+      ],
+      "value": 2.18
+    },
     "a.attr.builtin": {
       "run": "a-2026-10-09-attribution",
       "label": "LOCAL_MEASUREMENT",
@@ -314,17 +546,6 @@
         21.94
       ],
       "value": 21.94
-    },
-    "a.cold_no_volume": {
-      "run": "a-2026-10-09-attribution",
-      "label": "DERIVED",
-      "what": "median image-only create (2.31 s) + median first answer inside the sandbox (3.88 s)",
-      "n": 1,
-      "unit": "s",
-      "values": [
-        6.19
-      ],
-      "value": 6.19
     },
     "a.attr.process_survived": {
       "run": "a-2026-10-09-attribution",

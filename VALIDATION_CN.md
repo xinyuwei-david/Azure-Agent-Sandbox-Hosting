@@ -51,7 +51,7 @@ A 的冷启动为 `create_total_s + first.guest_s`，恢复到回答为 `resume_
 | `ask` | `sandbox.exec("python3 -c …")`，在沙箱内向 `http://127.0.0.1:8080/reflect` POST `{"query": …}` 并计时 |
 | `stop`、`resume`、`delete` | `sandbox.stop()` / `resume()` 后轮询；`delete_sandbox(id)` |
 
-[`tools/measure_aca.py`](tools/measure_aca.py) 复现 2026-10-09 的测法：`agent` 模式每次执行 create → 回答 → 回答 → stop → resume → 回答 → 回答 → delete，对话历史长度未持续增长时会失败；`create` 模式对每种配置（`builtin`、`image`、`vnet`、`port`、`vnetvolume`、`full`）测创建耗时，并记录恢复后的 guest uptime 是否大于停止前的值。uptime 本身不能证明进程内存的连续性；保留的 `process_survived` 字段只是这个观察的历史命名。`scale` 模式按 `--scale` 的每一档同时创建这么多完整规格的沙箱；每个沙箱问 D 和 E 的两个并发问题，第二个回答说出自己的词才算回答，进入下一档之前删除全部沙箱（`a-2026-10-18-scale`）。
+[`tools/measure_aca.py`](tools/measure_aca.py) 复现 2026-10-09 的测法：`agent` 模式每次执行 create → 回答 → 回答 → stop → resume → 回答 → 回答 → delete，对话历史长度未持续增长时会失败（`--config novolume` 不挂 Blob 卷跑同样流程，见 `a-2026-10-18-novolume`）；每个请求先在沙箱内等到 agent 在 8080 端口接受连接，这段等待计入冷启动；`create` 模式对每种配置（`builtin`、`image`、`vnet`、`port`、`vnetvolume`、`full`、`novolume`）测创建耗时，并记录恢复后的 guest uptime 是否大于停止前的值。uptime 本身不能证明进程内存的连续性；保留的 `process_survived` 字段只是这个观察的历史命名。`scale` 模式按 `--scale` 的每一档同时创建这么多完整规格的沙箱；每个沙箱问 D 和 E 的两个并发问题，第二个回答说出自己的词才算回答，进入下一档之前删除全部沙箱（`a-2026-10-18-scale`）。
 
 [`tools/measure_responses.py`](tools/measure_responses.py)（B 和 D）用 `https://ai.azure.com` 的 Azure CLI token 向 `AGENT_RESPONSES_URL` POST `{"input": …}`，后续轮次加上 `previous_response_id`。token 获取发生在请求计时之外，每个并发档位和恢复前都会刷新。带 `--observe` 时，仅接受唯一新增的 Ready Kata pod 作为候选；候选不唯一或读取失败都会失败，不能作为落地证据。观察时请使用没有其他新建会话的项目命名空间。`--recovery` 删除唯一新增的 Kata pod，等待删除完成后，沿用该会话的 response ID 追问。退出码 0 要求 cold、warm、并发和恢复中所有请求的检查都通过；跳过恢复、删除失败或遗忘状态会返回退出码 1。设置 `RESPONSES_AUTH_HEADER`（`Header-Name: value`，例如 API Management 密钥）时改发这个请求头而不是 token，`b-2026-10-18-perf` 就是这样；它的值不会打印或写入任何文件。
 
@@ -221,6 +221,44 @@ workshop 的脚本（`module-01/setup.sh`、`module-03/prepare-agent-sandbox.sh`
 - 每档只跑一次，只有一个客户端。8 个沙箱共 8 个活跃核，远低于默认配额 500，所以没有测到上限。
 - 创建耗时是 Japan East 客户端上的 SDK 计时；2026-10-09 的实测是从中国的一台工作站发起的。
 - 每个沙箱都在共享的 Blob 容器里写了一个以沙箱命名的小状态文件，与更早的 A 实测一样；这些文件留在了容器里。
+
+### a-2026-10-18-novolume：不挂 Blob 卷跑完整 agent 流程，共 3 次
+
+**问题。** 不挂私有 Blob 卷时，新沙箱多久给出第一个回答？只靠 Memory 快照，停止再恢复后对话还在不在？
+
+**输入。** [`tools/measure_aca.py`](tools/measure_aca.py) `agent --runs 3 --config novolume`，使用 `a-2026-10-09-agent` 的 sandbox group 和磁盘镜像（[`evidence/runs/a-aca-2026-10-18/agent-novolume.json`](evidence/runs/a-aca-2026-10-18/agent-novolume.json)），输入原文如下：
+
+<!-- BEGIN GENERATED: a-nv-input -->
+> 配置：custom agent disk image + VNet + OnDemand port, no Blob volume；cpu 1000m，memory 2048Mi，Memory 模式下空闲 900 s 自动挂起。
+> 请求：POST http://127.0.0.1:8080/reflect {"query": <input>}, sent with sandbox exec from inside the sandbox, after 127.0.0.1:8080 accepts a connection。
+> 第一个问题："Where is Bangkok? Answer in one short sentence."
+> 之后每一轮："How many questions have I asked before this one? Number only."
+<!-- END GENERATED: a-nv-input -->
+
+**变量与固定项。** 只去掉了 Blob 卷。镜像、VNet 连接、端口、`cpu`、`memory`、Memory 模式挂起、问题，以及 agent 的状态路径（`STATE_MOUNT_PATH`，现在是沙箱自己磁盘上的一个目录）都与 `a-2026-10-09-agent` 相同。客户端是 Japan East 的一台 Windows VM（WSL Ubuntu）；2026-10-09 的实测来自中国的一台工作站。
+
+**结果。**
+
+<!-- BEGIN GENERATED: a-nv -->
+单位为秒；最后一列是 agent 依次给出的回答。总耗时先在每次实测内相加，再取中位数；不能把各列独立统计的中位数相加。等 agent 就绪：在沙箱内等到 agent 在 8080 端口接受连接，再发第一个请求，计入冷启动。恢复后回答前的同样等待每次都是 0 s，计入恢复 → 回答。
+
+| 次 | 创建 → Running | 等 agent 就绪 | 第一个回答 | 冷启动 | 后续 | 停止 | 恢复 | 恢复后回答 | 恢复 → 回答 | 回答 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|
+| 1 | 2.15 | 0.0 | 5.96 | 8.11 | 1.02 | 20.23 | 1.22 | 1.74 | 2.96 | Bangkok is the capital city of Thailand in Southeast Asia. / 2 / 3 / 4 |
+| 2 | 1.35 | 0.0 | 3.51 | 4.86 | 0.84 | 10.67 | 4.46 | 2.32 | 6.78 | Bangkok is the capital city of Thailand in Southeast Asia. / 2 / 3 / 4 |
+| 3 | 1.22 | 0.0 | 3.13 | 4.35 | 0.67 | 9.88 | 0.82 | 1.88 | 2.7 | Bangkok is the capital city of Thailand in Southeast Asia. / 2 / 3 / 4 |
+| **中位数** | **1.35** | **0.0** | **3.51** | **4.86** | **0.84** | **10.67** | **1.22** | **1.88** | **2.96** |  |
+<!-- END GENERATED: a-nv -->
+
+不挂卷时，停止再恢复后对话接着增长 <!--v:a.nv.state_kept.count-->3<!--/v-->/<!--v:a.nv.state_kept.n-->3<!--/v--> 次：agent 的状态文件留在沙箱磁盘上，Memory 快照把它保住了。与 `a-2026-10-09-agent` 相比，冷启动从 <!--v:a.cold.median-->28.0<!--/v--> s 降到 <!--v:a.nv.cold.median-->4.86<!--/v--> s，恢复到回答从 <!--v:a.recover.median-->14.45<!--/v--> s 降到 <!--v:a.nv.recover.median-->2.96<!--/v--> s。第一处差别是创建（<!--v:a.create.median-->24.25<!--/v--> s 对 <!--v:a.nv.create.median-->1.35<!--/v--> s）；第二处是恢复后沙箱内的第一个回答（<!--v:a.first_after_resume.median-->12.84<!--/v--> s 对 <!--v:a.nv.first_after_resume.median-->1.88<!--/v--> s）。
+
+**边界。**
+- 共三次，都是显式停止和恢复；没有等 900 s 空闲后的自动挂起。
+- 记录只说明恢复后多出的时间在哪里（沙箱内的第一个回答），不说明原因；说它来自 Blob 挂载，是从这个差别推断的。
+- 不挂卷时停止反而更慢（中位数 <!--v:a.nv.stop.median-->10.67<!--/v--> s 对 <!--v:a.stop.median-->7.56<!--/v--> s，其中一次 <!--v:a.nv.stop.max-->20.23<!--/v--> s）；记录看不出原因。
+- 不挂卷时，Running 可能早于 agent 开始监听。在这三次之前，先用旧版工具（沙箱一读到 Running 就发第一个请求）跑了一次冒烟和第一组三次：<!--v:a.nv.earlier.count-->3<!--/v-->/<!--v:a.nv.earlier.n-->4<!--/v--> 次完成（冷启动 <!--v:a.nv.earlier_cold.range-->4.33–5.03<!--/v--> s，恢复到回答 <!--v:a.nv.earlier_recover.range-->2.57–10.67<!--/v--> s），另一次在创建 <!--v:a.nv.refused_after.value-->2.18<!--/v--> s 后发出的第一个请求被拒绝，因为 agent 还没有开始监听。现在工具会先在沙箱内等到 agent 接受连接，并把这段等待计入冷启动。这些都在记录的 `earlier_attempts` 里。
+- 这时状态只存在这个沙箱里。删除沙箱后、或从别的沙箱读取状态，都没有测。
+- 创建、停止和恢复是客户端上的 SDK 耗时，这次客户端在 Japan East，2026-10-09 在中国；两天的回答都在沙箱内计时。
 
 ### b-2026-09-27：Foundry hosted agent，部署和两种模型路由
 
@@ -972,6 +1010,7 @@ host a 上的空闲 `base` 沙箱：
 cd "$HOSTING_REPO"
 set -a && . ./.env && set +a
 python tools/measure_aca.py agent --runs 3
+python tools/measure_aca.py agent --runs 3 --config novolume
 python tools/measure_aca.py scale --scale 4,8
 python tools/measure_responses.py --cold 3 --warm-turns 3
 python tools/measure_responses.py --cold 3 --warm-turns 3 --scale 4,8 --recovery --observe
@@ -1030,7 +1069,7 @@ CI 在 Ubuntu 上用 Python 3.12 运行同样的检查（[工作流](https://git
 
 **边界。**
 
-- `LOCAL_MEASUREMENT`：A 的完整 agent 时延 n=3，另有同时 4 个和 8 个沙箱各一次；B 是一轮端到端实测、三次会话接口实测、一轮 D 口径压测（冷启动 n=5、后续回答 n=3、4 和 8 并发），以及两种空闲等待后各三次；C 是一轮端到端实测，加不挂卷和挂 Blob PVC 各三次（含 pod 丢失和挂起/恢复），以及 4 和 8 并发各一次；D 是一轮压测，其中镜像已缓存的冷启动 n=5、后续回答 n=3，会话落地和恢复各一次，另有三次会话接口实测。依赖某个数字之前，请按本页在线测量命令重新测。
+- `LOCAL_MEASUREMENT`：A 的完整 agent 时延带 Blob 卷 n=3、不挂卷 n=3，另有同时 4 个和 8 个沙箱各一次；B 是一轮端到端实测、三次会话接口实测、一轮 D 口径压测（冷启动 n=5、后续回答 n=3、4 和 8 并发），以及两种空闲等待后各三次；C 是一轮端到端实测，加不挂卷和挂 Blob PVC 各三次（含 pod 丢失和挂起/恢复），以及 4 和 8 并发各一次；D 是一轮压测，其中镜像已缓存的冷启动 n=5、后续回答 n=3，会话落地和恢复各一次，另有三次会话接口实测。依赖某个数字之前，请按本页在线测量命令重新测。
 - `LOCAL_MEASUREMENT`：A 和 C 使用 workshop reflection agent；B 使用 Agent Framework 和 ResponsesHostServer；D 使用私有预览 sample。B 的 2026-09-27 实测和 D 包含 Foundry 端点和位于中国的客户端（往返 <!--v:d.client_rtt.range-->320–800<!--/v--> ms）；B 的 2026-10-15 和 2026-10-18 实测客户端在 Japan East，并经过 API Management 网关；D 的 2026-10-18 实测从 Japan East 直接调用端点；A 的回答在沙箱内计时；C 在 2026-09-27 于它的 LoadBalancer 处计时，2026-10-18 在 pod 内计时。表中每一行比较的是现场实现，不是相同容器或相同网络链路。
 - `LOCAL_MEASUREMENT`：A 加上私有 Blob 卷后创建耗时为 <!--v:a.attr.vnetvolume.range-->15.79–25.12<!--/v--> s；只加镜像、VNet 或端口时为 <!--v:a.attr.small.range-->1.6–2.7<!--/v--> s。
 - `LOCAL_MEASUREMENT`：最早的 D 会话 pod 在创建至少 <!--v:d.idle.value-->87<!--/v--> 分钟后仍是 Running。这是 pod 的年龄，不是空闲时长：没有保留最后一次请求的时间戳。它不能证明配置的空闲超时，也不能证明期间始终空闲。

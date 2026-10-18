@@ -96,44 +96,70 @@ def build(runs: dict[str, dict], index: dict[str, str]) -> dict:
             raise BuildError(f"duplicate metric {key}")
         m[key] = {"run": run_id, "label": label, "what": what, **rec}
 
-    # A · 2026-10-09, full agent, n = 3
-    a = runs["a-aca-2026-10-09/agent-runs.json"]
-    rid = a["run_id"]
-    ar = a["runs"]
-    if len(ar) != 3:
-        raise BuildError("A agent run should have 3 runs")
-    for r in ar:
-        if "error" in r or "delete_error" in r:
-            raise BuildError(f"A run {r['run']}: recorded an error")
-        if abs(r["create_total_s"] + r["first"]["guest_s"] - r["cold_total_s"]) > 0.011:
-            raise BuildError(f"A run {r['run']}: cold_total_s is not create + first answer")
-        if abs(r["resume_total_s"] + r["first_after_resume"]["guest_s"] - r["recover_total_s"]) > 0.011:
-            raise BuildError(f"A run {r['run']}: recover_total_s is not resume + answer")
-    put("a.create", rid, "LOCAL_MEASUREMENT", stat([r["create_total_s"] for r in ar]),
-        "create call until Running, full spec")
-    put("a.cold", rid, "LOCAL_MEASUREMENT", stat([r["cold_total_s"] for r in ar]),
-        "SDK create wall time + first answer timed inside the sandbox; a component sum, not client end-to-end wall time")
-    put("a.first_answer", rid, "LOCAL_MEASUREMENT", stat([r["first"]["guest_s"] for r in ar]),
-        "first answer only, timed inside the sandbox")
-    put("a.warm", rid, "LOCAL_MEASUREMENT", stat([r["warm"]["guest_s"] for r in ar]),
-        "follow-up answer in the running sandbox")
-    put("a.stop", rid, "LOCAL_MEASUREMENT", stat([r["stop_total_s"] for r in ar]),
-        "stop call until Stopped (memory snapshot)")
-    put("a.resume", rid, "LOCAL_MEASUREMENT", stat([r["resume_total_s"] for r in ar]),
-        "resume call until Running")
-    put("a.first_after_resume", rid, "LOCAL_MEASUREMENT",
-        stat([r["first_after_resume"]["guest_s"] for r in ar]), "first answer after resume")
-    put("a.recover", rid, "LOCAL_MEASUREMENT", stat([r["recover_total_s"] for r in ar]),
-        "SDK resume wall time + first answer inside the sandbox; excludes stop and idle waiting")
-    put("a.warm_after_resume", rid, "LOCAL_MEASUREMENT", stat([r["warm_after_resume"]["guest_s"] for r in ar]),
-        "next answer after that")
-    vmm = sorted({r["vmm_type"] for r in ar})
-    put("a.vmm", rid, "LOCAL_MEASUREMENT",
-        {"n": len(ar), "unit": "runs", "value": vmm[0] if len(vmm) == 1 else vmm,
-         "count": sum(r["vmm_type"] == "cloudhypervisor" for r in ar)}, "vmm_type the API reported")
-    kept = sum(r["first_after_resume"]["history_length"] > r["warm"]["history_length"] for r in ar)
-    put("a.state_kept", rid, "LOCAL_MEASUREMENT", {"n": len(ar), "unit": "runs", "count": kept},
-        "conversation history length kept growing across stop and resume")
+    # A · full agent, n = 3: 2026-10-09 with the Blob volume ("a"), 2026-10-18 without it ("a.nv")
+    def agent(prefix: str, rel: str, spec: str) -> list[dict]:
+        a = runs[rel]
+        rid, ar = a["run_id"], a["runs"]
+        if len(ar) != 3:
+            raise BuildError(f"{rel}: the agent run should have 3 runs")
+        for r in ar:
+            if "error" in r or "delete_error" in r:
+                raise BuildError(f"{rel} run {r['run']}: recorded an error")
+            first, after = r["first"], r["first_after_resume"]
+            if abs(r["create_total_s"] + first.get("ready_wait_s", 0) + first["guest_s"] - r["cold_total_s"]) > 0.011:
+                raise BuildError(f"{rel} run {r['run']}: cold_total_s is not create + wait + first answer")
+            if abs(r["resume_total_s"] + after.get("ready_wait_s", 0) + after["guest_s"] - r["recover_total_s"]) > 0.011:
+                raise BuildError(f"{rel} run {r['run']}: recover_total_s is not resume + wait + answer")
+        wait = "ready_wait_s" in ar[0]["first"]
+        put(f"{prefix}.create", rid, "LOCAL_MEASUREMENT", stat([r["create_total_s"] for r in ar]),
+            f"create call until Running, {spec}")
+        put(f"{prefix}.cold", rid, "LOCAL_MEASUREMENT", stat([r["cold_total_s"] for r in ar]),
+            "SDK create wall time + " + ("wait until the agent accepted a connection + " if wait else "") +
+            "first answer timed inside the sandbox; a component sum, not client end-to-end wall time")
+        put(f"{prefix}.first_answer", rid, "LOCAL_MEASUREMENT", stat([r["first"]["guest_s"] for r in ar]),
+            "first answer only, timed inside the sandbox")
+        put(f"{prefix}.warm", rid, "LOCAL_MEASUREMENT", stat([r["warm"]["guest_s"] for r in ar]),
+            "follow-up answer in the running sandbox")
+        put(f"{prefix}.stop", rid, "LOCAL_MEASUREMENT", stat([r["stop_total_s"] for r in ar]),
+            "stop call until Stopped (memory snapshot)")
+        put(f"{prefix}.resume", rid, "LOCAL_MEASUREMENT", stat([r["resume_total_s"] for r in ar]),
+            "resume call until Running")
+        put(f"{prefix}.first_after_resume", rid, "LOCAL_MEASUREMENT",
+            stat([r["first_after_resume"]["guest_s"] for r in ar]), "first answer after resume")
+        put(f"{prefix}.recover", rid, "LOCAL_MEASUREMENT", stat([r["recover_total_s"] for r in ar]),
+            "SDK resume wall time + " + ("wait + " if wait else "") +
+            "first answer inside the sandbox; excludes stop and idle waiting")
+        put(f"{prefix}.warm_after_resume", rid, "LOCAL_MEASUREMENT",
+            stat([r["warm_after_resume"]["guest_s"] for r in ar]), "next answer after that")
+        if wait:
+            put(f"{prefix}.ready_wait", rid, "LOCAL_MEASUREMENT", stat([r["first"]["ready_wait_s"] for r in ar]),
+                "inside the sandbox, until the agent accepted a connection, before the first answer")
+            put(f"{prefix}.ready_wait_resume", rid, "LOCAL_MEASUREMENT",
+                stat([r["first_after_resume"]["ready_wait_s"] for r in ar]), "the same before the answer after resume")
+        vmm = sorted({r["vmm_type"] for r in ar})
+        put(f"{prefix}.vmm", rid, "LOCAL_MEASUREMENT",
+            {"n": len(ar), "unit": "runs", "value": vmm[0] if len(vmm) == 1 else vmm,
+             "count": sum(r["vmm_type"] == "cloudhypervisor" for r in ar)}, "vmm_type the API reported")
+        kept = sum(r["first_after_resume"]["history_length"] > r["warm"]["history_length"] for r in ar)
+        put(f"{prefix}.state_kept", rid, "LOCAL_MEASUREMENT", {"n": len(ar), "unit": "runs", "count": kept},
+            "conversation history length kept growing across stop and resume")
+        return a.get("earlier_attempts", [])
+
+    agent("a", "a-aca-2026-10-09/agent-runs.json", "full spec")
+    earlier = agent("a.nv", "a-aca-2026-10-18/agent-novolume.json", "full spec without the Blob volume")
+    nv_rid = runs["a-aca-2026-10-18/agent-novolume.json"]["run_id"]
+    failed = [f for e in earlier for f in e["failures"]]
+    if not earlier or len(failed) != 1 or sum(e["runs"] for e in earlier) != sum(e["completed"] for e in earlier) + 1:
+        raise BuildError("a-2026-10-18-novolume: expected the earlier attempts to hold exactly one failed run")
+    put("a.nv.earlier", nv_rid, "LOCAL_MEASUREMENT",
+        {"n": sum(e["runs"] for e in earlier), "unit": "runs", "count": sum(e["completed"] for e in earlier)},
+        "earlier attempts with the tool revision that did not wait for the agent port: runs completed")
+    put("a.nv.earlier_cold", nv_rid, "LOCAL_MEASUREMENT", stat([v for e in earlier for v in e["cold_total_s"]]),
+        "cold of the completed earlier attempts")
+    put("a.nv.earlier_recover", nv_rid, "LOCAL_MEASUREMENT", stat([v for e in earlier for v in e["recover_total_s"]]),
+        "resume → answer of the completed earlier attempts")
+    put("a.nv.refused_after", nv_rid, "LOCAL_MEASUREMENT", single(failed[0]["create_total_s"]),
+        "create → Running of the earlier run whose first request was refused before the agent listened")
 
     att = runs["a-aca-2026-10-09/create-attribution.json"]
     by_cfg: dict[str, list[float]] = {}
@@ -156,9 +182,6 @@ def build(runs: dict[str, dict], index: dict[str, str]) -> dict:
     put("a.blob_mount_overhead", att["run_id"], "DERIVED",
         single(round(m["a.create"]["median"] - m["a.attr.image"]["median"], 2)),
         "median create with private Blob volume (24.25 s) minus median create with image only (2.31 s)")
-    put("a.cold_no_volume", att["run_id"], "DERIVED",
-        single(round(m["a.attr.image"]["median"] + m["a.first_answer"]["median"], 2)),
-        "median image-only create (2.31 s) + median first answer inside the sandbox (3.88 s)")
     survived = [r["process_survived"] for r in att["runs"]]
     put("a.attr.process_survived", att["run_id"], "LOCAL_MEASUREMENT",
         {"n": len(survived), "unit": "runs", "count": sum(bool(x) for x in survived)},

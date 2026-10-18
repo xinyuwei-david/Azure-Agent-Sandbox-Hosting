@@ -127,6 +127,14 @@ def test_aca_request_returns_the_real_answer():
     assert answer["response"] == "Hello" and answer["history_length"] == 1
 
 
+def test_aca_request_waits_for_the_agent_port_and_reports_the_wait():
+    code = aca_sandbox.reflect_code("Hi")
+    assert "connect_ex(('127.0.0.1',8080))" in code and code.index("connect_ex") < code.index("urlopen")
+    sandbox = SimpleNamespace(exec=lambda _: SimpleNamespace(exit_code=0, stdout=json.dumps(
+        {"seconds": 1.0, "wait": 2.5, "body": {"response": "Hello", "history_length": 1}})))
+    assert aca_sandbox.ask(sandbox, "Hi")["ready_wait_s"] == 2.5
+
+
 def test_builtin_config_needs_no_sdk_and_full_needs_an_image():
     cfg = {"vnet_connection": "aca-vnet", "volume": "v", "allow_cidr": ""}
     kw = aca_sandbox.config_kwargs("builtin", cfg, None, None)
@@ -135,6 +143,22 @@ def test_builtin_config_needs_no_sdk_and_full_needs_an_image():
         aca_sandbox.config_kwargs("full", cfg, None, {})
     with pytest.raises(ValueError):
         aca_sandbox.config_kwargs("everything", cfg, "img", {})
+
+
+def test_novolume_config_is_full_without_the_blob_volume(monkeypatch):
+    monkeypatch.setattr(aca_sandbox, "port_request", lambda cfg: "port-8080")
+    cfg = {"vnet_connection": "aca-vnet", "volume": "v", "allow_cidr": ""}
+    kw = aca_sandbox.config_kwargs("novolume", cfg, "img", {"AGENT_ID": "a"})
+    assert kw["volumes"] is None and kw["ports"] == ["port-8080"]
+    assert kw["customer_vnet_connection_name"] == "aca-vnet" and kw["disk_id"] == "img"
+    assert kw["auto_suspend_mode"] == "Memory" and kw["environment"] == {"AGENT_ID": "a"}
+
+
+@pytest.mark.parametrize("config", ("image", "full,novolume"))
+def test_aca_agent_mode_takes_one_agent_config(config):
+    with pytest.raises(SystemExit) as exc:
+        measure_aca.main(["agent", "--config", config])
+    assert exc.value.code == 2
 
 
 def test_measure_responses_inputs_match_the_measured_run():
@@ -259,16 +283,20 @@ def test_aca_agent_measurement_checks_state_across_resume(monkeypatch, lengths):
     group = SimpleNamespace(_do_create_sandbox=lambda **kwargs: (sandbox, SimpleNamespace(id="sandbox-1",
                                                                                        state="Running")),
                             get_sandbox=lambda _: None)
-    turns = iter({"guest_s": 1.0, "history_length": length} for length in lengths)
+    turns = iter({"guest_s": 1.0, "ready_wait_s": 0.5, "history_length": length} for length in lengths)
     monkeypatch.setattr(aca_sandbox, "agent_environment", lambda *args, **kwargs: {})
-    monkeypatch.setattr(aca_sandbox, "config_kwargs", lambda *args: {})
+    used = []
+    monkeypatch.setattr(aca_sandbox, "config_kwargs", lambda name, *args: used.append(name) or {})
     monkeypatch.setattr(aca_sandbox, "poll_state", lambda getter, targets: (
         0, SimpleNamespace(state=targets[0], vmm_type="cloudhypervisor"), 1))
     monkeypatch.setattr(aca_sandbox, "ask", lambda *args: next(turns))
     monkeypatch.setattr(measure_aca.time, "sleep", lambda _: None)
-    result = measure_aca.agent_run(group, {}, "image-1", 1)
+    result = measure_aca.agent_run(group, {}, "image-1", 1, "novolume")
+    assert used == ["novolume"] and result["config"] == "novolume"
     if lengths == [1, 2, 3, 4]:
         assert result["state_kept"] is True and "error" not in result
+        assert result["cold_total_s"] == pytest.approx(result["create_total_s"] + 1.5, abs=0.011)
+        assert result["recover_total_s"] == pytest.approx(result["resume_total_s"] + 1.5, abs=0.011)
     else:
         assert result["state_kept"] is False and "error" in result
 
