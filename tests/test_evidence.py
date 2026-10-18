@@ -140,7 +140,7 @@ def test_invalid_duration_in_raw_runs_fails(value):
         bm.build(runs, index)
 
 
-def test_invalid_setup_component_fails_before_aggregation():
+def test_invalid_setup_component_fails():
     runs, index = bm.load_runs()
     runs["a-aca-2026-09-27/setup-and-wake.json"]["events"][0]["seconds"] = -1.0
     with pytest.raises(bm.BuildError, match=r"setup-and-wake.json.*seconds"):

@@ -1331,7 +1331,7 @@ Not tested here: the tools against a fresh subscription end to end after this re
 **Assets.**
 
 - [`tools/`](tools/): `aca_sandbox.py`, `measure_aca.py`, `measure_responses.py`, `measure_e2b.py`, `measure_code_interpreter.py`, `measure_sessions.py`, `measure_c.py`, `e2b_agent.py`, `check_isolation.py` (live); `export_evidence.py` (author only), `build_measurements.py`, `render_docs.py`, `build_diagrams.py`, `validate_docs.py` (offline).
-- [`evidence/claims.json`](evidence/claims.json): the canonical A–E identities, statuses, ownership, boundaries, selection contract, letter mapping and run order; [`evidence/runs/`](evidence/runs/): the redacted run records with the SHA-256 of their private sources, and `INDEX.json`; [`evidence/measurements.json`](evidence/measurements.json): every published metric.
+- [`evidence/claims.json`](evidence/claims.json): the canonical A–E identities, statuses, ownership, boundaries, letter mapping and run order; [`evidence/runs/`](evidence/runs/): the redacted run records with the SHA-256 of their private sources, and `INDEX.json`; [`evidence/measurements.json`](evidence/measurements.json): every published metric.
 - [`images/`](images/): the architecture figures, their source of truth `tools/build_diagrams.py`, the 8 Azure icons and [`SOURCES.json`](images/SOURCES.json).
 - [`config/.env.example`](config/.env.example): every setting; [`tests/`](tests/): the offline tests and their fixtures.
 

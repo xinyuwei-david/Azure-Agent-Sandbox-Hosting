@@ -1,5 +1,4 @@
 {
-  "schema": 1,
   "built_from": {
     "a-aca-2026-09-27/setup-and-wake.json": "979a4bf6a61361b5f98a49368aefaf82994dc26b91ca1c20094311ab6dba2bcb",
     "a-aca-2026-10-09/agent-runs.json": "1c0df4840cc9704eb8943482335d7eb691249bc872d9809c86bd5625452bae05",
@@ -154,30 +153,6 @@
       "max": 17.22,
       "median": 14.45
     },
-    "a.warm_after_resume": {
-      "run": "a-2026-10-09-agent",
-      "label": "LOCAL_MEASUREMENT",
-      "what": "next answer after that",
-      "n": 3,
-      "unit": "s",
-      "values": [
-        1.44,
-        2.05,
-        1.1
-      ],
-      "min": 1.1,
-      "max": 2.05,
-      "median": 1.44
-    },
-    "a.vmm": {
-      "run": "a-2026-10-09-agent",
-      "label": "LOCAL_MEASUREMENT",
-      "what": "vmm_type the API reported",
-      "n": 3,
-      "unit": "runs",
-      "value": "cloudhypervisor",
-      "count": 3
-    },
     "a.state_kept": {
       "run": "a-2026-10-09-agent",
       "label": "LOCAL_MEASUREMENT",
@@ -215,6 +190,15 @@
       "resume": 1.61,
       "wait": 0,
       "answer": 12.84
+    },
+    "a.vmm": {
+      "run": "a-2026-10-09-agent",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "vmm_type the API reported",
+      "n": 3,
+      "unit": "runs",
+      "value": "cloudhypervisor",
+      "count": 3
     },
     "a.nv.create": {
       "run": "a-2026-10-18-novolume",
@@ -336,21 +320,6 @@
       "max": 6.78,
       "median": 2.96
     },
-    "a.nv.warm_after_resume": {
-      "run": "a-2026-10-18-novolume",
-      "label": "LOCAL_MEASUREMENT",
-      "what": "next answer after that",
-      "n": 3,
-      "unit": "s",
-      "values": [
-        1.23,
-        1.36,
-        1.03
-      ],
-      "min": 1.03,
-      "max": 1.36,
-      "median": 1.23
-    },
     "a.nv.ready_wait": {
       "run": "a-2026-10-18-novolume",
       "label": "LOCAL_MEASUREMENT",
@@ -380,15 +349,6 @@
       "min": 0.0,
       "max": 0.0,
       "median": 0.0
-    },
-    "a.nv.vmm": {
-      "run": "a-2026-10-18-novolume",
-      "label": "LOCAL_MEASUREMENT",
-      "what": "vmm_type the API reported",
-      "n": 3,
-      "unit": "runs",
-      "value": "cloudhypervisor",
-      "count": 3
     },
     "a.nv.state_kept": {
       "run": "a-2026-10-18-novolume",
@@ -580,25 +540,6 @@
       "max": 2.7,
       "median": 2.31
     },
-    "a.attr.resume_small": {
-      "run": "a-2026-10-09-attribution",
-      "label": "LOCAL_MEASUREMENT",
-      "what": "image alone, image + VNet, image + port: every resume call until Running",
-      "n": 7,
-      "unit": "s",
-      "values": [
-        2.02,
-        2.78,
-        2.6,
-        1.58,
-        1.8,
-        1.61,
-        2.79
-      ],
-      "min": 1.58,
-      "max": 2.79,
-      "median": 2.02
-    },
     "a.attr.process_survived": {
       "run": "a-2026-10-09-attribution",
       "label": "LOCAL_MEASUREMENT",
@@ -633,32 +574,6 @@
       "min": 12.4,
       "max": 20.29
     },
-    "a.setup": {
-      "run": "a-2026-09-27-setup",
-      "label": "LOCAL_MEASUREMENT",
-      "what": "sandbox group + VNet connection + disk image + Blob volume + sandbox",
-      "n": 1,
-      "unit": "s",
-      "value": 146.6,
-      "parts": [
-        90,
-        9.6,
-        21.9,
-        3.6,
-        21.5
-      ]
-    },
-    "a.wake_http": {
-      "run": "a-2026-09-27-setup",
-      "label": "LOCAL_MEASUREMENT",
-      "what": "HTTP request to a stopped sandbox's on-demand port until the answer",
-      "n": 1,
-      "unit": "s",
-      "values": [
-        23.7
-      ],
-      "value": 23.7
-    },
     "a.isolation": {
       "run": "a-2026-09-27-setup",
       "label": "LOCAL_MEASUREMENT",
@@ -678,109 +593,6 @@
         3
       ],
       "value": 3
-    },
-    "b.init": {
-      "run": "b-2026-09-27",
-      "label": "LOCAL_MEASUREMENT",
-      "what": "azd ai agent init",
-      "n": 1,
-      "unit": "s",
-      "values": [
-        38.4
-      ],
-      "value": 38.4
-    },
-    "b.deploy": {
-      "run": "b-2026-09-27",
-      "label": "LOCAL_MEASUREMENT",
-      "what": "azd deploy, version 1",
-      "n": 1,
-      "unit": "s",
-      "values": [
-        161
-      ],
-      "value": 161
-    },
-    "b.deploy_v2": {
-      "run": "b-2026-09-27",
-      "label": "LOCAL_MEASUREMENT",
-      "what": "azd deploy, version 2",
-      "n": 1,
-      "unit": "s",
-      "values": [
-        100
-      ],
-      "value": 100
-    },
-    "b.cold_gateway": {
-      "run": "b-2026-09-27",
-      "label": "LOCAL_MEASUREMENT",
-      "what": "new session until the answer, gateway route",
-      "n": 1,
-      "unit": "s",
-      "values": [
-        9.43
-      ],
-      "value": 9.43
-    },
-    "b.cold_gateway_ttfb": {
-      "run": "b-2026-09-27",
-      "label": "LOCAL_MEASUREMENT",
-      "what": "new session until first response byte, gateway route",
-      "n": 1,
-      "unit": "s",
-      "values": [
-        7.66
-      ],
-      "value": 7.66
-    },
-    "b.cold_direct": {
-      "run": "b-2026-09-27",
-      "label": "LOCAL_MEASUREMENT",
-      "what": "new session until the answer, direct route",
-      "n": 1,
-      "unit": "s",
-      "values": [
-        5.29
-      ],
-      "value": 5.29
-    },
-    "b.cold_direct_ttfb": {
-      "run": "b-2026-09-27",
-      "label": "LOCAL_MEASUREMENT",
-      "what": "new session until first response byte, direct route",
-      "n": 1,
-      "unit": "s",
-      "values": [
-        3.61
-      ],
-      "value": 3.61
-    },
-    "b.warm_gateway": {
-      "run": "b-2026-09-27",
-      "label": "LOCAL_MEASUREMENT",
-      "what": "follow-up turns, gateway route",
-      "n": 2,
-      "unit": "s",
-      "values": [
-        4.03,
-        5.54
-      ],
-      "min": 4.03,
-      "max": 5.54
-    },
-    "b.warm_direct": {
-      "run": "b-2026-09-27",
-      "label": "LOCAL_MEASUREMENT",
-      "what": "follow-up turns, direct route",
-      "n": 2,
-      "unit": "s",
-      "values": [
-        4.94,
-        4.38
-      ],
-      "min": 4.38,
-      "max": 4.94
     },
     "b.sess.create": {
       "run": "b-2026-10-15-sessions",
@@ -811,36 +623,6 @@
       "min": 4.786,
       "max": 5.852,
       "median": 5.625
-    },
-    "b.sess.first_server": {
-      "run": "b-2026-10-15-sessions",
-      "label": "LOCAL_MEASUREMENT",
-      "what": "first answer: response completed_at minus created_at as recorded by the service (whole seconds)",
-      "n": 3,
-      "unit": "s",
-      "values": [
-        3,
-        2,
-        4
-      ],
-      "min": 2,
-      "max": 4,
-      "median": 3
-    },
-    "b.sess.cold": {
-      "run": "b-2026-10-15-sessions",
-      "label": "LOCAL_MEASUREMENT",
-      "what": "create session until active + first answer, added per run; a sum of two client requests",
-      "n": 3,
-      "unit": "s",
-      "values": [
-        12.313,
-        11.651,
-        12.362
-      ],
-      "min": 11.651,
-      "max": 12.362,
-      "median": 12.313
     },
     "b.sess.warm": {
       "run": "b-2026-10-15-sessions",
@@ -934,28 +716,6 @@
       "files": 3,
       "conversation": 3
     },
-    "c.prepare": {
-      "run": "c-2026-09-27",
-      "label": "LOCAL_MEASUREMENT",
-      "what": "image, AKS, Kata pool, controller, storage",
-      "n": 1,
-      "unit": "s",
-      "values": [
-        600
-      ],
-      "value": 600
-    },
-    "c.private_link": {
-      "run": "c-2026-09-27",
-      "label": "LOCAL_MEASUREMENT",
-      "what": "Blob private endpoint",
-      "n": 1,
-      "unit": "s",
-      "values": [
-        168
-      ],
-      "value": 168
-    },
     "c.apply_ready": {
       "run": "c-2026-09-27",
       "label": "LOCAL_MEASUREMENT",
@@ -966,44 +726,6 @@
         44.9
       ],
       "value": 44.9
-    },
-    "c.first": {
-      "run": "c-2026-09-27",
-      "label": "LOCAL_MEASUREMENT",
-      "what": "first answer",
-      "n": 1,
-      "unit": "s",
-      "values": [
-        12.75
-      ],
-      "value": 12.75
-    },
-    "c.warm": {
-      "run": "c-2026-09-27",
-      "label": "LOCAL_MEASUREMENT",
-      "what": "second answer",
-      "n": 1,
-      "unit": "s",
-      "values": [
-        1.96
-      ],
-      "value": 1.96
-    },
-    "c.cold": {
-      "run": "c-2026-09-27",
-      "label": "DERIVED",
-      "what": "apply until Ready + first answer",
-      "n": 1,
-      "unit": "s",
-      "value": 57.65
-    },
-    "c.setup": {
-      "run": "c-2026-09-27",
-      "label": "DERIVED",
-      "what": "prepare + private link + apply until Ready",
-      "n": 1,
-      "unit": "s",
-      "value": 812.9
     },
     "c.pod_lost": {
       "run": "c-2026-09-27",
@@ -1016,17 +738,6 @@
       ],
       "value": 23.4
     },
-    "c.suspend": {
-      "run": "c-2026-09-27",
-      "label": "LOCAL_MEASUREMENT",
-      "what": "operatingMode Suspended until the pod is gone",
-      "n": 1,
-      "unit": "s",
-      "values": [
-        9.7
-      ],
-      "value": 9.7
-    },
     "c.resume_ready": {
       "run": "c-2026-09-27",
       "label": "LOCAL_MEASUREMENT",
@@ -1037,28 +748,6 @@
         17.1
       ],
       "value": 17.1
-    },
-    "c.resume_lb": {
-      "run": "c-2026-09-27",
-      "label": "LOCAL_MEASUREMENT",
-      "what": "until the LoadBalancer health check returns 200",
-      "n": 1,
-      "unit": "s",
-      "values": [
-        26.1
-      ],
-      "value": 26.1
-    },
-    "c.resume_answer": {
-      "run": "c-2026-09-27",
-      "label": "LOCAL_MEASUREMENT",
-      "what": "until the first answer",
-      "n": 1,
-      "unit": "s",
-      "values": [
-        34.2
-      ],
-      "value": 34.2
     },
     "c.isolation": {
       "run": "c-2026-09-27",
@@ -1144,21 +833,6 @@
       "min": 14.01,
       "max": 16.16,
       "median": 15.49
-    },
-    "d.warm": {
-      "run": "d-2026-09-29-perf",
-      "label": "LOCAL_MEASUREMENT",
-      "what": "follow-up turns, same session",
-      "n": 3,
-      "unit": "s",
-      "values": [
-        16.421,
-        11.169,
-        12.899
-      ],
-      "min": 11.169,
-      "max": 16.421,
-      "median": 12.899
     },
     "d.c4": {
       "run": "d-2026-09-29-perf",
@@ -1264,17 +938,6 @@
       "max": 5.07,
       "median": 2.69
     },
-    "d.node_scale": {
-      "run": "d-2026-09-29-perf",
-      "label": "LOCAL_MEASUREMENT",
-      "what": "Kata pool scale operation from one to three nodes",
-      "n": 1,
-      "unit": "s",
-      "values": [
-        143
-      ],
-      "value": 143
-    },
     "d.client_rtt": {
       "run": "d-2026-09-29-perf",
       "label": "LOCAL_MEASUREMENT",
@@ -1305,19 +968,6 @@
       "first_session_wall_s": 51,
       "nsg_rule": "Allow-AzureCloud-FoundryRouter-443",
       "nsg_priority": 500
-    },
-    "d.aks_start": {
-      "run": "d-2026-09-22-field",
-      "label": "LOCAL_MEASUREMENT",
-      "what": "az aks start until Running",
-      "n": 2,
-      "unit": "s",
-      "values": [
-        283,
-        281
-      ],
-      "min": 281,
-      "max": 283
     },
     "d.role_assignments": {
       "run": "d-2026-09-22-field",
@@ -1351,17 +1001,6 @@
         212
       ],
       "value": 212
-    },
-    "d.onboarding": {
-      "run": "d-2026-09-22-field",
-      "label": "LOCAL_MEASUREMENT",
-      "what": "roles + azd provision + first azd deploy; console not retained",
-      "n": 1,
-      "unit": "s",
-      "values": [
-        854
-      ],
-      "value": 854
     },
     "d.initial_runtime_pods": {
       "run": "d-2026-09-22-field",
@@ -1499,21 +1138,6 @@
       "max": 12.82,
       "median": 6.48
     },
-    "e.warm_after_resume": {
-      "run": "e-2026-10-14-agent",
-      "label": "LOCAL_MEASUREMENT",
-      "what": "next answer after that",
-      "n": 3,
-      "unit": "s",
-      "values": [
-        5.57,
-        3.37,
-        5.18
-      ],
-      "min": 3.37,
-      "max": 5.57,
-      "median": 5.18
-    },
     "e.vmm": {
       "run": "e-2026-10-14-agent",
       "label": "LOCAL_MEASUREMENT",
@@ -1542,17 +1166,6 @@
         33.0,
         144.0
       ]
-    },
-    "e.isolation": {
-      "run": "e-2026-10-14-agent",
-      "label": "LOCAL_MEASUREMENT",
-      "what": "uname -r inside the E2B Firecracker sandbox and on the Azure host VM",
-      "n": 1,
-      "unit": "read-back",
-      "vmm_type": "firecracker",
-      "firecracker_version": "v1.14-0.2.0",
-      "guest_kernel": "6.1.177+",
-      "host_kernel": "6.17.0-1022-azure"
     },
     "e.cost_floor": {
       "run": "e-2026-10-14-agent",
@@ -1737,21 +1350,6 @@
       "max": 7.75,
       "median": 3.44
     },
-    "e.d_warm": {
-      "run": "e-2026-10-14-perf",
-      "label": "LOCAL_MEASUREMENT",
-      "what": "follow-up turns in the same session, D-matched warm protocol",
-      "n": 3,
-      "unit": "s",
-      "values": [
-        5.03,
-        3.19,
-        3.39
-      ],
-      "min": 3.19,
-      "max": 5.03,
-      "median": 3.39
-    },
     "e.c4": {
       "run": "e-2026-10-14-perf",
       "label": "LOCAL_MEASUREMENT",
@@ -1786,15 +1384,6 @@
       ],
       "refused": 0
     },
-    "e.capacity": {
-      "run": "e-2026-10-14-perf",
-      "label": "LOCAL_MEASUREMENT",
-      "what": "largest at-once level answered in full on one host VM; no live micro-VM count is published for this run because the driver's pgrep count included its own shell (perf.json firecracker_process_count)",
-      "n": 1,
-      "unit": "sessions",
-      "max_sessions": 8,
-      "node_sku": "Standard_D4ds_v7"
-    },
     "e.pod_lost": {
       "run": "e-2026-10-14-perf",
       "label": "LOCAL_MEASUREMENT",
@@ -1805,17 +1394,6 @@
         0.1
       ],
       "value": 0.1
-    },
-    "e.other_session_followup": {
-      "run": "e-2026-10-14-perf",
-      "label": "LOCAL_MEASUREMENT",
-      "what": "follow-up on a different live session after the sandbox kill; that session kept LANTERN-7",
-      "n": 1,
-      "unit": "s",
-      "values": [
-        2.61
-      ],
-      "value": 2.61
     },
     "e.multi.b.create": {
       "run": "e-2026-10-15-multi",
@@ -1988,24 +1566,6 @@
       },
       "refusal_cause": "cannot allocate memory"
     },
-    "e.multi.idle": {
-      "run": "e-2026-10-15-multi",
-      "label": "LOCAL_MEASUREMENT",
-      "what": "idle base sandboxes created on host a before the first refused create, per run",
-      "n": 3,
-      "unit": "sandboxes",
-      "values": [
-        5,
-        7,
-        7
-      ],
-      "max": 7,
-      "refusals": [
-        "error setting fc metrics (connection refused)",
-        "cannot allocate memory",
-        "cannot allocate memory"
-      ]
-    },
     "e.multi.hugepages": {
       "run": "e-2026-10-15-multi",
       "label": "LOCAL_MEASUREMENT",
@@ -2016,22 +1576,6 @@
       "postgres": 75,
       "per_sandbox": 256,
       "fit": 7
-    },
-    "e.multi.hostloss": {
-      "run": "e-2026-10-15-multi",
-      "label": "LOCAL_MEASUREMENT",
-      "what": "host a's E2B stack stopped with docker compose stop (VM running), then started again",
-      "n": 1,
-      "unit": "read-back",
-      "other_live_session": true,
-      "other_new_session_s": 4.117,
-      "lost_paused_from_other": false,
-      "lost_create": false,
-      "own_paused_after_restart": true,
-      "running_before_stop_after_restart": false,
-      "new_session_after_restart_s": 4.024,
-      "stop_s": 73.69,
-      "start_s": 59.55
     },
     "e.latest.sdk.create": {
       "run": "e-2026-10-15-latest",
@@ -2227,16 +1771,6 @@
       "failed": [
         "javascript kernel"
       ]
-    },
-    "e.latest.build": {
-      "run": "e-2026-10-15-latest",
-      "label": "LOCAL_MEASUREMENT",
-      "what": "unchanged build_prod.py against host a; host settings raised between attempts",
-      "n": 4,
-      "unit": "attempts",
-      "built_attempt": 4,
-      "built_s": 426,
-      "steps": 30
     },
     "e.ci.create": {
       "run": "e-2026-10-17-ci-agent",
@@ -2470,17 +2004,6 @@
         0.118
       ],
       "value": 0.118
-    },
-    "e.ci.other_session_followup": {
-      "run": "e-2026-10-17-ci-perf",
-      "label": "LOCAL_MEASUREMENT",
-      "what": "follow-up on a different live session after the sandbox kill; that session kept LANTERN-7",
-      "n": 1,
-      "unit": "s",
-      "values": [
-        6.86
-      ],
-      "value": 6.86
     },
     "e.ci.idle": {
       "run": "e-2026-10-17-ci-perf",
@@ -2960,24 +2483,6 @@
         "200": 24
       }
     },
-    "e.m.hostloss": {
-      "run": "e-2026-10-18-ci-multi",
-      "label": "LOCAL_MEASUREMENT",
-      "what": "host a's E2B stack stopped with docker compose stop (VM running), then started again; code-interpreter-v1",
-      "n": 1,
-      "unit": "read-back",
-      "other_live_session": true,
-      "other_live_session_s": 2.77,
-      "other_new_session_s": 2.427,
-      "lost_paused_from_other": false,
-      "lost_create": false,
-      "own_paused_after_restart": true,
-      "own_paused_after_restart_s": 4.78,
-      "running_before_stop_after_restart": false,
-      "new_session_after_restart_s": 4.287,
-      "stop_s": 77.86,
-      "start_s": 63.14
-    },
     "e.s.isolation": {
       "run": "e-2026-10-18-ci-scale",
       "label": "LOCAL_MEASUREMENT",
@@ -3144,17 +2649,6 @@
       ],
       "value": 0.063
     },
-    "e.s.other_session_followup": {
-      "run": "e-2026-10-18-ci-scale",
-      "label": "LOCAL_MEASUREMENT",
-      "what": "follow-up on a different live session after the sandbox kill on host d; that session kept LANTERN-7",
-      "n": 1,
-      "unit": "s",
-      "values": [
-        3.5
-      ],
-      "value": 3.5
-    },
     "e.s.reserve": {
       "run": "e-2026-10-18-ci-scale",
       "label": "LOCAL_MEASUREMENT",
@@ -3199,23 +2693,6 @@
         11885,
         11875
       ]
-    },
-    "e.s.setup": {
-      "run": "e-2026-10-18-ci-scale",
-      "label": "LOCAL_MEASUREMENT",
-      "what": "README step 7 on a new Standard_D8ds_v7: Docker Engine, Compose up, project_limits row and 300 s wait, clone and build environment, code-interpreter-v1 build",
-      "n": 1,
-      "unit": "s",
-      "value": 1494,
-      "parts": [
-        42,
-        215,
-        301,
-        7,
-        929
-      ],
-      "build_steps": 30,
-      "builder_reported": "15m26s"
     },
     "a.c4": {
       "run": "a-2026-10-18-scale",
@@ -3354,19 +2831,6 @@
       "max": 1021.509,
       "median": 1021.48
     },
-    "b.idle.state": {
-      "run": "b-2026-10-18-idle",
-      "label": "LOCAL_MEASUREMENT",
-      "what": "session status read after the wait, before the next turn",
-      "n": 3,
-      "unit": "runs",
-      "states": [
-        "active",
-        "idle",
-        "idle"
-      ],
-      "idle": 2
-    },
     "b.idle.warm": {
       "run": "b-2026-10-18-idle",
       "label": "LOCAL_MEASUREMENT",
@@ -3427,6 +2891,19 @@
       "max": 5.424,
       "median": 3.989
     },
+    "b.idle.state": {
+      "run": "b-2026-10-18-idle",
+      "label": "LOCAL_MEASUREMENT",
+      "what": "session status read after the wait, before the next turn",
+      "n": 3,
+      "unit": "runs",
+      "states": [
+        "active",
+        "idle",
+        "idle"
+      ],
+      "idle": 2
+    },
     "b.idle.state_kept": {
       "run": "b-2026-10-18-idle",
       "label": "LOCAL_MEASUREMENT",
@@ -3450,19 +2927,6 @@
       "min": 301.454,
       "max": 301.75,
       "median": 301.466
-    },
-    "b.idle5.state": {
-      "run": "b-2026-10-18-idle",
-      "label": "LOCAL_MEASUREMENT",
-      "what": "session status read after the wait, before the next turn",
-      "n": 3,
-      "unit": "runs",
-      "states": [
-        "active",
-        "active",
-        "active"
-      ],
-      "idle": 0
     },
     "b.idle5.warm": {
       "run": "b-2026-10-18-idle",
@@ -3524,15 +2988,6 @@
       "max": 4.401,
       "median": 4.157
     },
-    "b.idle5.state_kept": {
-      "run": "b-2026-10-18-idle",
-      "label": "LOCAL_MEASUREMENT",
-      "what": "files: the file written before the wait read back unchanged; conversation: the question count kept growing",
-      "n": 3,
-      "unit": "runs",
-      "files": 3,
-      "conversation": 3
-    },
     "c.n.apply_ready": {
       "run": "c-2026-10-18-perf",
       "label": "LOCAL_MEASUREMENT",
@@ -3577,21 +3032,6 @@
       "min": 23.82,
       "max": 27.34,
       "median": 24.27
-    },
-    "c.n.warm": {
-      "run": "c-2026-10-18-perf",
-      "label": "LOCAL_MEASUREMENT",
-      "what": "follow-up answer timed inside the pod, no volume",
-      "n": 3,
-      "unit": "s",
-      "values": [
-        1.08,
-        1.0,
-        1.03
-      ],
-      "min": 1.0,
-      "max": 1.08,
-      "median": 1.03
     },
     "c.p.apply_ready": {
       "run": "c-2026-10-18-perf",

@@ -129,17 +129,11 @@ def build(runs: dict[str, dict], index: dict[str, str]) -> dict:
         put(f"{prefix}.recover", rid, "LOCAL_MEASUREMENT", stat([r["recover_total_s"] for r in ar]),
             "SDK resume wall time + " + ("wait + " if wait else "") +
             "first answer inside the sandbox; excludes stop and idle waiting")
-        put(f"{prefix}.warm_after_resume", rid, "LOCAL_MEASUREMENT",
-            stat([r["warm_after_resume"]["guest_s"] for r in ar]), "next answer after that")
         if wait:
             put(f"{prefix}.ready_wait", rid, "LOCAL_MEASUREMENT", stat([r["first"]["ready_wait_s"] for r in ar]),
                 "inside the sandbox, until the agent accepted a connection, before the first answer")
             put(f"{prefix}.ready_wait_resume", rid, "LOCAL_MEASUREMENT",
                 stat([r["first_after_resume"]["ready_wait_s"] for r in ar]), "the same before the answer after resume")
-        vmm = sorted({r["vmm_type"] for r in ar})
-        put(f"{prefix}.vmm", rid, "LOCAL_MEASUREMENT",
-            {"n": len(ar), "unit": "runs", "value": vmm[0] if len(vmm) == 1 else vmm,
-             "count": sum(r["vmm_type"] == "cloudhypervisor" for r in ar)}, "vmm_type the API reported")
         kept = sum(r["first_after_resume"]["history_length"] > r["warm"]["history_length"] for r in ar)
         put(f"{prefix}.state_kept", rid, "LOCAL_MEASUREMENT", {"n": len(ar), "unit": "runs", "count": kept},
             "conversation history length kept growing across stop and resume")
@@ -157,6 +151,11 @@ def build(runs: dict[str, dict], index: dict[str, str]) -> dict:
         return a.get("earlier_attempts", [])
 
     agent("a", "a-aca-2026-10-09/agent-runs.json", "full spec")
+    a09 = runs["a-aca-2026-10-09/agent-runs.json"]
+    vmm = sorted({r["vmm_type"] for r in a09["runs"]})
+    put("a.vmm", a09["run_id"], "LOCAL_MEASUREMENT",
+        {"n": len(a09["runs"]), "unit": "runs", "value": vmm[0] if len(vmm) == 1 else vmm,
+         "count": sum(r["vmm_type"] == "cloudhypervisor" for r in a09["runs"])}, "vmm_type the API reported")
     earlier = agent("a.nv", "a-aca-2026-10-18/agent-novolume.json", "full spec without the Blob volume")
     nv_rid = runs["a-aca-2026-10-18/agent-novolume.json"]["run_id"]
     failed = [f for e in earlier for f in e["failures"]]
@@ -187,9 +186,6 @@ def build(runs: dict[str, dict], index: dict[str, str]) -> dict:
     small = by_cfg["image"] + by_cfg["vnet"] + by_cfg["port"]
     put("a.attr.small", att["run_id"], "LOCAL_MEASUREMENT", stat(small),
         "image alone, image + VNet, image + port: every create time")
-    small_resume = [r["resume_total_s"] for r in att["runs"] if r["config"] in ("image", "vnet", "port")]
-    put("a.attr.resume_small", att["run_id"], "LOCAL_MEASUREMENT", stat(small_resume),
-        "image alone, image + VNet, image + port: every resume call until Running")
     survived = [r["process_survived"] for r in att["runs"]]
     put("a.attr.process_survived", att["run_id"], "LOCAL_MEASUREMENT",
         {"n": len(survived), "unit": "runs", "count": sum(bool(x) for x in survived)},
@@ -202,41 +198,14 @@ def build(runs: dict[str, dict], index: dict[str, str]) -> dict:
         "attach the Blob volume to the running sandbox")
 
     setup = runs["a-aca-2026-09-27/setup-and-wake.json"]
-    ev = {e["step"]: e for e in setup["events"]}
-    parts = [setup["sandbox_group_deploy_seconds"]] + [ev[s]["seconds"] for s in
-                                                       ("vnet_connection", "disk_image", "volume", "sandbox_create")]
-    put("a.setup", setup["run_id"], "LOCAL_MEASUREMENT",
-        {"n": 1, "unit": "s", "value": round(sum(parts), 1), "parts": parts},
-        "sandbox group + VNet connection + disk image + Blob volume + sandbox")
-    put("a.wake_http", setup["run_id"], "LOCAL_MEASUREMENT", single(ev["wake_on_http_request"]["seconds"]),
-        "HTTP request to a stopped sandbox's on-demand port until the answer")
     iso = setup["isolation_check"]
     put("a.isolation", setup["run_id"], "LOCAL_MEASUREMENT",
         {"n": 1, "unit": "read-back", "vmm_type": iso["vmm_type"], "guest_kernel": iso["guest_kernel"]},
         "read inside the sandbox")
 
-    # Shared foundation, B and C · 2026-09-27, one run each
+    # Shared foundation · 2026-09-27, one run
     f = runs["abc-2026-09-27/foundation.json"]
     put("f.deploy", f["run_id"], "LOCAL_MEASUREMENT", single(f["deploy_minutes"], "min"), "module-01 deployment")
-    b = runs["b-hosted-agent-2026-09-27/run.json"]
-    rid = b["run_id"]
-    put("b.init", rid, "LOCAL_MEASUREMENT", single(b["azd_ai_agent_init_seconds"]), "azd ai agent init")
-    put("b.deploy", rid, "LOCAL_MEASUREMENT", single(b["deploy_v1_gateway"]["seconds"]), "azd deploy, version 1")
-    put("b.deploy_v2", rid, "LOCAL_MEASUREMENT", single(b["deploy_v2_direct"]["seconds"]), "azd deploy, version 2")
-    put("b.cold_gateway", rid, "LOCAL_MEASUREMENT", single(b["invoke_v1_gateway"]["new_session_seconds"]),
-        "new session until the answer, gateway route")
-    put("b.cold_gateway_ttfb", rid, "LOCAL_MEASUREMENT",
-        single(b["invoke_v1_gateway"]["new_session_first_byte_seconds"]),
-        "new session until first response byte, gateway route")
-    put("b.cold_direct", rid, "LOCAL_MEASUREMENT", single(b["invoke_v2_direct"]["new_session_seconds"]),
-        "new session until the answer, direct route")
-    put("b.cold_direct_ttfb", rid, "LOCAL_MEASUREMENT",
-        single(b["invoke_v2_direct"]["new_session_first_byte_seconds"]),
-        "new session until first response byte, direct route")
-    put("b.warm_gateway", rid, "LOCAL_MEASUREMENT", stat(b["invoke_v1_gateway"]["warm_seconds"]),
-        "follow-up turns, gateway route")
-    put("b.warm_direct", rid, "LOCAL_MEASUREMENT", stat(b["invoke_v2_direct"]["warm_seconds"]),
-        "follow-up turns, direct route")
 
     # B · 2026-10-15, explicit session lifecycle through the session API, n = 3
     bs = runs["b-sessions-2026-10-15/sessions.json"]
@@ -259,10 +228,6 @@ def build(runs: dict[str, dict], index: dict[str, str]) -> dict:
     put("b.sess.create", rid, "LOCAL_MEASUREMENT", stat(create),
         "POST .../endpoint/sessions until the session reads active, client wall time")
     put("b.sess.first", rid, "LOCAL_MEASUREMENT", stat(first), "first answer on the active session, client wall time")
-    put("b.sess.first_server", rid, "LOCAL_MEASUREMENT", stat([r["first"]["server_s"] for r in br]),
-        "first answer: response completed_at minus created_at as recorded by the service (whole seconds)")
-    put("b.sess.cold", rid, "LOCAL_MEASUREMENT", stat([round(x + y, 3) for x, y in zip(create, first)]),
-        "create session until active + first answer, added per run; a sum of two client requests")
     put("b.sess.warm", rid, "LOCAL_MEASUREMENT", stat([r["warm"]["total_s"] for r in br]),
         "follow-up answer on the same session")
     put("b.sess.stop", rid, "LOCAL_MEASUREMENT",
@@ -281,37 +246,19 @@ def build(runs: dict[str, dict], index: dict[str, str]) -> dict:
         "files: the file written before stop read back unchanged after resume; conversation: the question count "
         "kept growing across stop and resume")
 
+    # C · 2026-09-27, one run
     c = runs["c-aks-agent-sandbox-2026-09-27/run.json"]
     rid = c["run_id"]
     resume = c["resume"]
     if not (resume["sandbox_ready_seconds"] <= resume["lb_health_200_seconds"]
             <= resume["first_answer_seconds"]):
         raise BuildError("C resume: expected Ready <= LoadBalancer healthy <= first answer")
-    put("c.prepare", rid, "LOCAL_MEASUREMENT", single(c["prepare_script_seconds"]),
-        "image, AKS, Kata pool, controller, storage")
-    put("c.private_link", rid, "LOCAL_MEASUREMENT", single(c["storage_private_link_seconds"]),
-        "Blob private endpoint")
     put("c.apply_ready", rid, "LOCAL_MEASUREMENT", single(c["sandbox_apply_to_ready_seconds"]),
         "Sandbox apply until Ready")
-    put("c.first", rid, "LOCAL_MEASUREMENT", single(c["reflect"]["first_seconds"]), "first answer")
-    put("c.warm", rid, "LOCAL_MEASUREMENT", single(c["reflect"]["second_seconds"]), "second answer")
-    put("c.cold", rid, "DERIVED",
-        {"n": 1, "unit": "s", "value": round(c["sandbox_apply_to_ready_seconds"] + c["reflect"]["first_seconds"], 2)},
-        "apply until Ready + first answer")
-    put("c.setup", rid, "DERIVED",
-        {"n": 1, "unit": "s", "value": round(c["prepare_script_seconds"] + c["storage_private_link_seconds"]
-                                             + c["sandbox_apply_to_ready_seconds"], 1)},
-        "prepare + private link + apply until Ready")
     put("c.pod_lost", rid, "LOCAL_MEASUREMENT", single(c["pod_delete_to_ready_seconds"]),
         "pod deleted until Ready again")
-    put("c.suspend", rid, "LOCAL_MEASUREMENT", single(c["suspend"]["pod_gone_seconds"]),
-        "operatingMode Suspended until the pod is gone")
     put("c.resume_ready", rid, "LOCAL_MEASUREMENT", single(c["resume"]["sandbox_ready_seconds"]),
         "operatingMode Running until the Sandbox is Ready")
-    put("c.resume_lb", rid, "LOCAL_MEASUREMENT", single(c["resume"]["lb_health_200_seconds"]),
-        "until the LoadBalancer health check returns 200")
-    put("c.resume_answer", rid, "LOCAL_MEASUREMENT", single(c["resume"]["first_answer_seconds"]),
-        "until the first answer")
     put("c.isolation", rid, "LOCAL_MEASUREMENT",
         {"n": 1, "unit": "read-back", "guest_kernel": c["kata_isolation"]["sandbox_kernel"],
          "system_node_kernel": c["kata_isolation"]["runc_pod_kernel"],
@@ -354,7 +301,6 @@ def build(runs: dict[str, dict], index: dict[str, str]) -> dict:
         stat([round(t["wall_s"] - t["pod"]["create_to_ready_s"], 2) for t in bench["cold_turns"]]),
         "paired cold wall time minus session pod create-to-Ready duration")
     follow = bench["warm_turns"][1:]
-    put("d.warm", rid, "LOCAL_MEASUREMENT", stat([t["wall_s"] for t in follow]), "follow-up turns, same session")
     if "LANTERN-7" not in (follow[0]["answer"] or ""):
         raise BuildError("D warm session did not remember LANTERN-7")
     levels = {lv["concurrency"]: lv for lv in bench["scalability"]}
@@ -399,8 +345,6 @@ def build(runs: dict[str, dict], index: dict[str, str]) -> dict:
     direct = runs["d-byoaks-2026-09-29/model-direct.json"]
     put("d.model_direct", direct["run_id"], "LOCAL_MEASUREMENT", stat([r["wall_s"] for r in direct["runs"]]),
         "same model called directly from the same client")
-    put("d.node_scale", rid, "LOCAL_MEASUREMENT", single(bench["scale_one_to_three_seconds"]),
-        "Kata pool scale operation from one to three nodes")
     latency = bench["latency_observation"]
     put("d.client_rtt", rid, "LOCAL_MEASUREMENT",
         {"n": 1, "unit": "ms", "min": latency["client_rtt_ms"][0], "max": latency["client_rtt_ms"][1]},
@@ -420,7 +364,6 @@ def build(runs: dict[str, dict], index: dict[str, str]) -> dict:
          "nsg_rule": pl["nsg_rule_added"]["name"], "nsg_priority": pl["nsg_rule_added"]["priority"]},
         "one initial pod observation plus the recheck observations; not a count of distinct pods")
     fld = runs["d-byoaks-2026-09-22/field.json"]
-    put("d.aks_start", fld["run_id"], "LOCAL_MEASUREMENT", stat(fld["aks_start_seconds"]), "az aks start until Running")
     onboarding = fld["onboarding_recorded"]
     put("d.role_assignments", fld["run_id"], "LOCAL_MEASUREMENT",
         single(onboarding["role_assignments_seconds_approx"]), "BYO-AKS role assignments; approximate")
@@ -428,8 +371,6 @@ def build(runs: dict[str, dict], index: dict[str, str]) -> dict:
         single(onboarding["azd_provision_seconds"]), "BYO-AKS azd provision")
     put("d.azd_deploy", fld["run_id"], "LOCAL_MEASUREMENT",
         single(onboarding["azd_deploy_seconds"]), "first BYO-AKS agent azd deploy")
-    put("d.onboarding", fld["run_id"], "LOCAL_MEASUREMENT",
-        single(onboarding["total_seconds_approx"]), "roles + azd provision + first azd deploy; console not retained")
     put("d.initial_runtime_pods", fld["run_id"], "LOCAL_MEASUREMENT",
         {"n": 1, "unit": "pods", "value": fld["foundry_system_pods"]},
         "foundry-system pods in the initial one-Kata-node read-back")
@@ -467,8 +408,6 @@ def build(runs: dict[str, dict], index: dict[str, str]) -> dict:
         stat([r["first_after_resume"]["guest_s"] for r in er]), "first Prompt Agent answer after resume")
     put("e.recover", rid, "LOCAL_MEASUREMENT", stat([r["recover_total_s"] for r in er]),
         "Sandbox.connect wall time + first answer after resume; excludes pause and idle waiting")
-    put("e.warm_after_resume", rid, "LOCAL_MEASUREMENT",
-        stat([r["warm_after_resume"]["guest_s"] for r in er]), "next answer after that")
     eiso = ea["isolation_check"]
     if "firecracker" not in eiso["vmm_source"]:
         raise BuildError("E VMM read-back does not name the Firecracker process")
@@ -483,11 +422,6 @@ def build(runs: dict[str, dict], index: dict[str, str]) -> dict:
         {"n": 1, "unit": "s", "value": round(esetup["apt_and_docker_s"] + esetup["compose_and_template_s"], 1),
          "parts": [esetup["apt_and_docker_s"], esetup["compose_and_template_s"]]},
         "Docker Engine install + E2B Embed Compose up + base Firecracker template build")
-    put("e.isolation", rid, "LOCAL_MEASUREMENT",
-        {"n": 1, "unit": "read-back", "vmm_type": eiso["vmm_type"],
-         "firecracker_version": eiso["firecracker_version"],
-         "guest_kernel": eiso["guest_kernel"], "host_kernel": eiso["host_kernel"]},
-        "uname -r inside the E2B Firecracker sandbox and on the Azure host VM")
     ecost = ea["cost_floor_usd_per_hour"]
     put("e.cost_floor", rid, "SOURCE_FACT",
         {"n": 1, "unit": "USD/h",
@@ -522,8 +456,6 @@ def build(runs: dict[str, dict], index: dict[str, str]) -> dict:
     efollow = ep["warm_turns"][1:]
     if "LANTERN-7" not in (efollow[0]["answer"] or ""):
         raise BuildError("E warm session did not remember LANTERN-7")
-    put("e.d_warm", erid, "LOCAL_MEASUREMENT", stat([t["wall_s"] for t in efollow]),
-        "follow-up turns in the same session, D-matched warm protocol")
     elevels = {lv["concurrency"]: lv for lv in ep["scalability"]}
     for n in (4, 8):
         lv = elevels[n]
@@ -535,21 +467,11 @@ def build(runs: dict[str, dict], index: dict[str, str]) -> dict:
         put(f"e.c{n}", erid, "LOCAL_MEASUREMENT",
             {"n": n, "unit": "sessions", "answered": len(ok), "answered_s": ok, "refused": len(refused)},
             f"{n} new sessions at once on 1 {ep['node_sku']} VM")
-    full = [n for n in (4, 8) if m[f"e.c{n}"]["answered"] == n]
-    if not full:
-        raise BuildError("E: no at-once level was answered in full")
-    put("e.capacity", erid, "LOCAL_MEASUREMENT",
-        {"n": ep["host_nodes"], "unit": "sessions", "max_sessions": max(full), "node_sku": ep["node_sku"]},
-        "largest at-once level answered in full on one host VM; no live micro-VM count is published for this run "
-        "because the driver's pgrep count included its own shell (perf.json firecracker_process_count)")
     erec = ep["recovery"]
     if not erec["followup_on_live_session"]["state_preserved"] or erec["followup_on_live_session"]["answer"] != "LANTERN-7":
         raise BuildError("the live session used after E sandbox kill did not keep LANTERN-7")
     put("e.pod_lost", erid, "LOCAL_MEASUREMENT", single(erec["replacement_ready_s"]),
         "sandbox killed until a replacement E2B sandbox is Ready")
-    put("e.other_session_followup", erid, "LOCAL_MEASUREMENT",
-        single(erec["followup_on_live_session"]["wall_s"]),
-        "follow-up on a different live session after the sandbox kill; that session kept LANTERN-7")
 
     def e_agent_runs(rid_: str, prefix: str, rr: list[dict], where: str) -> None:
         if len(rr) != 3:
@@ -622,30 +544,14 @@ def build(runs: dict[str, dict], index: dict[str, str]) -> dict:
     page = per_sandbox.pop()
     if (pool - pg) // page != max(fits):
         raise BuildError("E idle capacity: the largest count differs from the free hugepages / per-sandbox pages")
-    put("e.multi.idle", mrid, "LOCAL_MEASUREMENT",
-        {"n": len(fits), "unit": "sandboxes", "values": fits, "max": max(fits),
-         "refusals": [r["refusal"] for r in mu["idle_capacity_host_a"]]},
-        "idle base sandboxes created on host a before the first refused create, per run")
     put("e.multi.hugepages", mrid, "LOCAL_MEASUREMENT",
         {"n": 1, "unit": "pages", "pool": pool, "postgres": pg, "per_sandbox": page, "fit": max(fits)},
         "2 MiB hugepages: Compose default pool, held by postgres, reserved by each 512 MiB base sandbox at create")
     hl = mu["host_loss"]
-    b_after, a_after, a_back = hl["after_loss"]["b"], hl["after_loss"]["a"], hl["after_restart"]["a"]
     if hl["stop"]["exit_code"] != 0 or hl["start"]["exit_code"] != 0 or hl["start"]["health_up"]["status"] != 200:
         raise BuildError("E host loss: stopping or starting host a's stack failed")
     if hl["left_after_cleanup"] != {"a": 0, "b": 0}:
         raise BuildError("E host loss: sandboxes left after cleanup")
-    put("e.multi.hostloss", mrid, "LOCAL_MEASUREMENT", {
-        "n": 1, "unit": "read-back",
-        "other_live_session": b_after["live_session_read"]["ok"] and b_after["live_session_read"]["value"] == "LANTERN-7",
-        "other_new_session_s": b_after["new_session"]["value"]["wall_s"],
-        "lost_paused_from_other": b_after["connect_lost_hosts_paused_sandbox"]["ok"],
-        "lost_create": a_after["create"]["ok"],
-        "own_paused_after_restart": a_back["resume_own_paused_sandbox"]["ok"],
-        "running_before_stop_after_restart": a_back["live_sandbox_before_loss"]["ok"],
-        "new_session_after_restart_s": a_back["new_session"]["value"]["wall_s"],
-        "stop_s": hl["stop"]["seconds"], "start_s": hl["start"]["seconds"]},
-        "host a's E2B stack stopped with docker compose stop (VM running), then started again")
 
     # E · 2026-10-15, newest SDK and E2B's official code-interpreter template
     la = runs["e-e2b-2026-10-15/latest.json"]
@@ -671,10 +577,6 @@ def build(runs: dict[str, dict], index: dict[str, str]) -> dict:
     built = [b for b in builds if b["result"] == "built"]
     if len(built) != 1 or built[0]["step"] != built[0]["steps"]:
         raise BuildError("E code-interpreter: expected exactly one complete build")
-    put("e.latest.build", lrid, "LOCAL_MEASUREMENT",
-        {"n": len(builds), "unit": "attempts", "built_attempt": built[0]["attempt"], "built_s": built[0]["seconds"],
-         "steps": built[0]["steps"]},
-        "unchanged build_prod.py against host a; host settings raised between attempts")
 
     # E · 2026-10-17, the agent's code run by E2B's Code Interpreter (run_code) in code-interpreter-v1, host c
     ca, cp = runs["e-e2b-2026-10-17/ci-agent.json"], runs["e-e2b-2026-10-17/ci-perf.json"]
@@ -726,8 +628,6 @@ def build(runs: dict[str, dict], index: dict[str, str]) -> dict:
         raise BuildError("E code-interpreter: the live session used after the sandbox kill did not keep LANTERN-7")
     put("e.ci.pod_lost", prid, "LOCAL_MEASUREMENT", single(rec["replacement_ready_s"]),
         "sandbox killed until a replacement code-interpreter-v1 sandbox is Ready")
-    put("e.ci.other_session_followup", prid, "LOCAL_MEASUREMENT", single(live["wall_s"]),
-        "follow-up on a different live session after the sandbox kill; that session kept LANTERN-7")
     cap = cp["idle_capacity"]
     if cap["restore_rc"] != 0 or cap["restored_meminfo"]["hp_total"] != cap["hugepages_env_found"]:
         raise BuildError("E idle capacity: the hugepage pool was not restored")
@@ -858,24 +758,10 @@ def build(runs: dict[str, dict], index: dict[str, str]) -> dict:
     put("e.m.two_hosts", cmid, "LOCAL_MEASUREMENT", at_once_ci(cm["two_hosts"], "hosts a and c"),
         "4 sessions at once on each of hosts a and c, spread by the client, code-interpreter-v1")
     hl = cm["host_loss"]
-    c_after, a_after, a_back = hl["after_loss"]["c"], hl["after_loss"]["a"], hl["after_restart"]["a"]
     if hl["stop"]["exit_code"] != 0 or hl["start"]["exit_code"] != 0 or hl["start"]["health_up"]["status"] != 200:
         raise BuildError(f"{cmid}: stopping or starting host a's stack failed")
     if hl["left_after_cleanup"] != {"a": 0, "c": 0} or hl["conversations_deleted"] is not True:
         raise BuildError(f"{cmid}: sandboxes or conversations left after the host stop")
-    put("e.m.hostloss", cmid, "LOCAL_MEASUREMENT", {
-        "n": 1, "unit": "read-back",
-        "other_live_session": c_after["live_session_read"]["ok"] and c_after["live_session_read"]["value"] == "LANTERN-7",
-        "other_live_session_s": c_after["live_session_read"]["seconds"],
-        "other_new_session_s": c_after["new_session"]["value"]["wall_s"],
-        "lost_paused_from_other": c_after["connect_lost_hosts_paused_sandbox"]["ok"],
-        "lost_create": a_after["create"]["ok"],
-        "own_paused_after_restart": a_back["resume_own_paused_sandbox"]["ok"],
-        "own_paused_after_restart_s": a_back["resume_own_paused_sandbox"]["seconds"],
-        "running_before_stop_after_restart": a_back["live_sandbox_before_loss"]["ok"],
-        "new_session_after_restart_s": a_back["new_session"]["value"]["wall_s"],
-        "stop_s": hl["stop"]["seconds"], "start_s": hl["start"]["seconds"]},
-        "host a's E2B stack stopped with docker compose stop (VM running), then started again; code-interpreter-v1")
 
     cs = runs["e-e2b-2026-10-18/ci-scale.json"]
     csid = cs["run_id"]
@@ -911,8 +797,6 @@ def build(runs: dict[str, dict], index: dict[str, str]) -> dict:
         raise BuildError(f"{csid}: the live session used after the sandbox kill did not keep LANTERN-7")
     put("e.s.pod_lost", csid, "LOCAL_MEASUREMENT", single(rec["replacement_ready_s"]),
         "sandbox killed until a replacement code-interpreter-v1 sandbox is Ready on host d")
-    put("e.s.other_session_followup", csid, "LOCAL_MEASUREMENT", single(live["wall_s"]),
-        "follow-up on a different live session after the sandbox kill on host d; that session kept LANTERN-7")
     put("e.s.reserve", csid, "LOCAL_MEASUREMENT", reserved(cs),
         "2 MiB hugepages taken after each code-interpreter-v1 sandbox created on host d, until a create was refused")
     it, built = cs["install"]["install_time"], cs["install"]["build"]
@@ -920,11 +804,6 @@ def build(runs: dict[str, dict], index: dict[str, str]) -> dict:
              it["clone_and_build_env_s"], it["template_build_s"]]
     if built["exit_code"] != 0 or built["attempts"] != 1 or sum(parts) != it["total_s"]:
         raise BuildError(f"{csid}: the build did not pass on its one attempt, or the install parts do not add up")
-    put("e.s.setup", csid, "LOCAL_MEASUREMENT",
-        {"n": 1, "unit": "s", "value": it["total_s"], "parts": parts, "build_steps": built["steps"],
-         "builder_reported": built["builder_reported"]},
-        "README step 7 on a new Standard_D8ds_v7: Docker Engine, Compose up, project_limits row and 300 s wait, "
-        "clone and build environment, code-interpreter-v1 build")
 
     # A · 2026-10-18, 4 and 8 sandboxes at once with the full specification
     asc = runs["a-aca-2026-10-18/scale.json"]
@@ -981,12 +860,8 @@ def build(runs: dict[str, dict], index: dict[str, str]) -> dict:
                 raise BuildError(f"{rel} run {r['run']}: recorded an error, sent a stop or kept its session")
             if r["marker_after_resume"]["matches"] is not True or not count_grew(r):
                 raise BuildError(f"{rel} run {r['run']}: lost its file or its question count")
-        states = [r["idle"]["state_before_resume"] for r in rr]
         put(f"{key}.waited", rid, "LOCAL_MEASUREMENT", stat([r["idle"]["waited_s"] for r in rr]),
             f"no request to the session for {label}, then one status read")
-        put(f"{key}.state", rid, "LOCAL_MEASUREMENT",
-            {"n": len(rr), "unit": "runs", "states": states, "idle": sum(s in ("idle", "stopped") for s in states)},
-            "session status read after the wait, before the next turn")
         put(f"{key}.warm", rid, "LOCAL_MEASUREMENT", stat([r["warm"]["total_s"] for r in rr]),
             "follow-up turn before the wait, client wall time")
         put(f"{key}.next", rid, "LOCAL_MEASUREMENT", stat([r["resume"]["total_s"] for r in rr]),
@@ -995,10 +870,17 @@ def build(runs: dict[str, dict], index: dict[str, str]) -> dict:
             "that turn: completed_at minus created_at as recorded by the service (whole seconds)")
         put(f"{key}.after", rid, "LOCAL_MEASUREMENT", stat([r["warm_after_resume"]["total_s"] for r in rr]),
             "the turn after that")
-        put(f"{key}.state_kept", rid, "LOCAL_MEASUREMENT",
-            {"n": len(rr), "unit": "runs", "files": sum(r["marker_after_resume"]["matches"] is True for r in rr),
-             "conversation": sum(count_grew(r) for r in rr)},
-            "files: the file written before the wait read back unchanged; conversation: the question count kept growing")
+        if key == "b.idle":  # the 5 min control is published for its turn times only
+            states = [r["idle"]["state_before_resume"] for r in rr]
+            put(f"{key}.state", rid, "LOCAL_MEASUREMENT",
+                {"n": len(rr), "unit": "runs", "states": states,
+                 "idle": sum(s in ("idle", "stopped") for s in states)},
+                "session status read after the wait, before the next turn")
+            put(f"{key}.state_kept", rid, "LOCAL_MEASUREMENT",
+                {"n": len(rr), "unit": "runs", "files": sum(r["marker_after_resume"]["matches"] is True for r in rr),
+                 "conversation": sum(count_grew(r) for r in rr)},
+                "files: the file written before the wait read back unchanged; conversation: the question count "
+                "kept growing")
 
     # C · 2026-10-18, copies of the workshop Sandbox; answers timed inside the pod
     c18 = runs["c-aks-agent-sandbox-2026-10-18/perf.json"]
@@ -1023,8 +905,8 @@ def build(runs: dict[str, dict], index: dict[str, str]) -> dict:
             f"first answer timed inside the pod, {what}")
         put(f"{prefix}.cold", rid, "LOCAL_MEASUREMENT", stat([r["cold_total_s"] for r in rr]),
             f"apply until Ready + first answer inside the pod, added per run, {what}")
-        put(f"{prefix}.warm", rid, "LOCAL_MEASUREMENT", stat([r["follow_up"]["guest_s"] for r in rr]),
-            f"follow-up answer timed inside the pod, {what}")
+    put("c.p.warm", rid, "LOCAL_MEASUREMENT", stat([r["follow_up"]["guest_s"] for r in cpv]),
+        "follow-up answer timed inside the pod, with the Blob PVC")
     put("c.p.pod_lost", rid, "LOCAL_MEASUREMENT", stat([r["pod_delete_to_ready_s"] for r in cpv]),
         "kubectl delete pod until a new pod of the same Sandbox is Ready")
     put("c.p.suspend", rid, "LOCAL_MEASUREMENT", stat([r["suspend_to_pod_gone_s"] for r in cpv]),
@@ -1090,7 +972,7 @@ def build(runs: dict[str, dict], index: dict[str, str]) -> dict:
          "nodes": pods["nodes_of_new_pods"]},
         "session pods that appeared during the three runs (kubectl get pods -w; order and ages, no timestamps)")
 
-    return {"schema": 1, "built_from": dict(sorted(index.items())), "metrics": m}
+    return {"built_from": dict(sorted(index.items())), "metrics": m}
 
 
 def render(doc: dict) -> str:

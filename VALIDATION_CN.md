@@ -1331,7 +1331,7 @@ CI 在 Ubuntu 上用 Python 3.12 运行同样的检查（[工作流](https://git
 **目录。**
 
 - [`tools/`](tools/)：`aca_sandbox.py`、`measure_aca.py`、`measure_responses.py`、`measure_e2b.py`、`measure_code_interpreter.py`、`measure_sessions.py`、`measure_c.py`、`e2b_agent.py`、`check_isolation.py`（在线）；`export_evidence.py`（仅作者可运行）、`build_measurements.py`、`render_docs.py`、`build_diagrams.py`、`validate_docs.py`（离线）。
-- [`evidence/claims.json`](evidence/claims.json)：A–E 的 canonical 名称、状态、归属、隔离边界、选型合同、字母映射和实测顺序；[`evidence/runs/`](evidence/runs/)：脱敏后的实测记录，带私有源文件的 SHA-256，以及 `INDEX.json`；[`evidence/measurements.json`](evidence/measurements.json)：所有发布的指标。
+- [`evidence/claims.json`](evidence/claims.json)：A–E 的 canonical 名称、状态、归属、隔离边界、字母映射和实测顺序；[`evidence/runs/`](evidence/runs/)：脱敏后的实测记录，带私有源文件的 SHA-256，以及 `INDEX.json`；[`evidence/measurements.json`](evidence/measurements.json)：所有发布的指标。
 - [`images/`](images/)：架构图、它们的生成源 `tools/build_diagrams.py`、8 个 Azure 图标和 [`SOURCES.json`](images/SOURCES.json)。
 - [`config/.env.example`](config/.env.example)：全部配置项；[`tests/`](tests/)：离线测试和测试数据。
 

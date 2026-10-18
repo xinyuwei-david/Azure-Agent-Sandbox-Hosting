@@ -4,7 +4,6 @@ import re
 
 import pytest
 
-import render_docs as rd
 import validate_docs as vd
 
 PAGES = ("README.md", "README_CN.md", "VALIDATION.md", "VALIDATION_CN.md")

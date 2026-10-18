@@ -1,16 +1,4 @@
 {
-  "schema": 1,
-  "comparison_contract": {
-    "model": "gpt-5.4-mini",
-    "same_container_across_all_paths": false,
-    "ac_workload": "agenthost workshop module-03 reflection agent at commit 905f2c2",
-    "b_workload": "agenthost workshop module-02 Agent Framework agent with ResponsesHostServer at commit 905f2c2",
-    "d_workload": "BYO-AKS private-preview sample agent",
-    "e_workload": "Foundry Prompt Agent calling an E2B Firecracker sandbox tool on an Azure VM",
-    "common_behavior": "new stateful session, follow-up in the same session, and lifecycle or recovery where the path exposes it",
-    "general_managed_start": "B",
-    "long_running_per_user_start": "A"
-  },
   "measurement_scope": {
     "region": "East US 2",
     "first_date": "2026-09-22",
@@ -60,14 +48,10 @@
       "upstream_solution_letter": "B"
     },
     "D": {
-      "name": "BYO-AKS",
-      "upstream_module": "private-preview sample",
-      "upstream_solution_letter": null
+      "name": "BYO-AKS"
     },
     "E": {
-      "name": "E2B on Azure VM",
-      "upstream_module": "e2b-dev/runtime @ 588e5b9",
-      "upstream_solution_letter": null
+      "name": "E2B on Azure VM"
     }
   },
   "paths": {
@@ -175,30 +159,6 @@
   "d_runtime_topology": {
     "fixed_deployment_pods": 9,
     "daemonsets": 4,
-    "total_with_one_matching_node": 13,
-    "daemonsets_scale_with_matching_nodes": true
-  },
-  "sources": {
-    "aca_sandboxes": "https://learn.microsoft.com/azure/container-apps/sandboxes-overview",
-    "hosted_agents": "https://learn.microsoft.com/azure/foundry/agents/concepts/hosted-agents",
-    "hosted_agent_deployment": "https://learn.microsoft.com/azure/foundry/agents/how-to/deploy-hosted-agent",
-    "pod_sandboxing": "https://learn.microsoft.com/azure/aks/use-pod-sandboxing",
-    "agent_sandbox_api_v052": "https://github.com/kubernetes-sigs/agent-sandbox/blob/v0.5.2/docs/api.md",
-    "agent_sandbox_v052": "https://github.com/kubernetes-sigs/agent-sandbox/releases/tag/v0.5.2",
-    "workshop_905f2c2": "https://github.com/oxcp/ainotes/tree/905f2c2/agenthost",
-    "workshop_b_source": "https://github.com/oxcp/ainotes/blob/905f2c2/agenthost/module-02/agent-src/main.py",
-    "workshop_ac_source": "https://github.com/oxcp/ainotes/blob/905f2c2/agenthost/module-03/agent-src/app/main.py",
-    "aca_quotas": "https://sandboxes.azure.com/docs/sandboxes/limits",
-    "aca_ga_announcement": "https://techcommunity.microsoft.com/blog/appsonazureblog/azure-container-apps-sandboxes-now-generally-available/4559125",
-    "hosted_agents_ga_announcement": "https://azure.microsoft.com/updates?id=563596",
-    "hosted_agent_sizes": "https://learn.microsoft.com/azure/foundry/agents/concepts/hosted-agents#sandbox-sizes",
-    "aks_pod_sandboxing_ga": "https://azure.microsoft.com/updates?id=526237",
-    "aks_compute_isolation_scope": "https://learn.microsoft.com/azure/aks/concepts-pod-sandboxing",
-    "aks_stop_start": "https://learn.microsoft.com/azure/aks/start-stop-cluster",
-    "e2b_runtime_embed": "https://github.com/e2b-dev/runtime/tree/588e5b9500b0987bc5a700d91483b03f0ae7d2a2",
-    "e2b_docs": "https://e2b.dev/docs/sandbox",
-    "e2b_embed_hub": "https://github.com/e2b-dev/runtime/blob/588e5b9500b0987bc5a700d91483b03f0ae7d2a2/embed/README.md",
-    "e2b_embed_azure_terraform": "https://github.com/e2b-dev/runtime/blob/588e5b9500b0987bc5a700d91483b03f0ae7d2a2/embed/terraform/azure/README.md",
-    "e2b_code_interpreter": "https://github.com/e2b-dev/code-interpreter/tree/162a2a25b6a5ea5806749a437b96cbdc5bfc087e/template"
+    "total_with_one_matching_node": 13
   }
 }

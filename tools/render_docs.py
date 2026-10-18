@@ -188,33 +188,22 @@ def comparison_details(c: Ctx) -> tuple[list[str], list[list[str]]]:
 
 # GitHub removes <wbr> and inline CSS. Soft hyphens and split code spans keep the full table wrappable.
 TABLE_WORD_BREAKS = {
-    "LoadBalancer": "Load|Balancer", "Sandboxes": "Sand|boxes", "concurrent": "con|current",
-    "configurable": "config|urable", "configure": "con|figure", "connection": "con|nection",
-    "continuity": "con|tinuity", "detection": "de|tection", "documented": "docu|mented",
-    "exercisable": "exer|cisable", "exercised": "exer|cised", "generation": "gener|ation",
-    "implement": "imple|ment", "inactivity": "in|activity", "independent": "inde|pendent",
-    "microbenchmark": "micro|bench|mark", "persisted": "per|sisted", "recycling": "re|cycling",
-    "sandboxes": "sand|boxes", "scheduled": "sched|uled", "separable": "sep|arable",
-    "separately": "sep|arately", "serverless": "server|less", "shutdownTime": "shutdown|Time",
-    "snapshots": "snap|shots", "subscription": "sub|scrip|tion", "templates": "tem|plates",
+    "Sandboxes": "Sand|boxes", "continuity": "con|tinuity", "documented": "docu|mented",
+    "exercisable": "exer|cisable", "separately": "sep|arately", "snapshots": "snap|shots",
+    "templates": "tem|plates",
 }
 
 
 def wrap_table_cell(text: str) -> str:
-    parts = re.split(r"(`[^`\n]+`|\[[^\]\n]+\]\([^)]+\))", text)
+    parts = re.split(r"(`[^`\n]+`)", text)
     for i, part in enumerate(parts):
         if part.startswith("`"):
             code = part[1:-1]
             if len(code) >= 10:
                 pieces = re.split(r"(?<=[ _/\-])(?=.)", code)
                 parts[i] = "<br>".join(f"<code>{html.escape(piece)}</code>" for piece in pieces) + "&#8203;"
-        elif part.startswith("["):
-            label, url = part.split("](", 1)
-            parts[i] = f"[{wrap_table_cell(label[1:])}]({url}"
         else:
             part = re.sub(r"[A-Za-z]{9,}", lambda m: TABLE_WORD_BREAKS.get(m[0], m[0]).replace("|", "&shy;"), part)
-            part = re.sub(r"(?<=[A-Za-z0-9])_(?=[A-Za-z0-9])", "_&#8203;", part)
-            part = re.sub(r"(?<=[A-Za-z])/(?=[A-Za-z])", "/&#8203;", part)
             part = re.sub(r"(?<=\S)(?=（)|(?<=）)(?=）)", "&#8203;", part)
             parts[i] = re.sub(r"(?<=\d)–(?=\d)", "–&#8203;", part)
     return "".join(parts)
@@ -778,7 +767,6 @@ def v_e_warm(c: Ctx) -> str:
 
 
 def v_e_scale(c: Ctx) -> str:
-    m = c.m
     head = [c.t("At once", "并发"), c.t("Answered", "回答"), c.t("Refused", "拒绝"),
             c.t("Sandbox create + turn 1, s", "沙箱创建 + 第 1 轮，s")]
     rows = []
@@ -1480,7 +1468,6 @@ def v_e_cm_agent(c: Ctx) -> str:
 
 
 def v_e_cm_scale(c: Ctx) -> str:
-    cm = c.runs[E_MULTI]
     head = [c.t("Phase", "阶段"), c.t("Sessions at once", "同时会话"), c.t("Answered", "回答"), c.t("Refused", "拒绝"),
             c.t("Sandbox create, s", "沙箱创建，s"), c.t("Whole session, s", "整个会话，s"),
             c.t("Model HTTP attempts", "模型 HTTP 尝试")]
