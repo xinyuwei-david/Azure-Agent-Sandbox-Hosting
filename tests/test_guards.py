@@ -79,27 +79,6 @@ def test_selectable_compute_drift_fails_information_alignment(name, lang):
     assert any("selectable_compute" in error for error in vd.check_information_alignment(p))
 
 
-@pytest.mark.parametrize("name,lang", (("README.md", "en"), ("README_CN.md", "zh")))
-def test_scheduled_expiry_cannot_be_renamed_request_idle_timeout(name, lang):
-    p = pages()
-    claims = json.loads(vd.read("evidence/claims.json"))
-    value = claims["paths"]["C"][f"idle_policy_{lang}"]
-    wrapped = rd.wrap_table_cell(value)
-    assert wrapped in p[name]
-    p[name] = p[name].replace(wrapped, rd.wrap_table_cell(value.replace("shutdownTime", "idleTimeout")), 1)
-    assert any("official idle-policy" in error for error in vd.check_information_alignment(p))
-
-
-@pytest.mark.parametrize("name,lang", (("README.md", "en"), ("README_CN.md", "zh")))
-def test_byoaks_unverified_idle_policy_cannot_become_a_timeout(name, lang):
-    p = pages()
-    claims = json.loads(vd.read("evidence/claims.json"))
-    value = rd.wrap_table_cell(claims["paths"]["D"][f"idle_policy_{lang}"])
-    assert value in p[name]
-    p[name] = p[name].replace(value, "87 min idle reclamation timeout", 1)
-    assert any("official idle-policy" in error for error in vd.check_information_alignment(p))
-
-
 def test_table_before_input_fails():
     p = pages()
     p["VALIDATION.md"] = p["VALIDATION.md"].replace(
@@ -181,7 +160,7 @@ def test_resume_clock_drift_fails(name):
     assert any(name in error for error in vd.check_information_alignment(p))
 
 
-@pytest.mark.parametrize("name", PAGES)
+@pytest.mark.parametrize("name", ("VALIDATION.md", "VALIDATION_CN.md"))
 def test_pod_age_is_not_an_idle_duration(name):
     p = pages()
     if name.endswith("_CN.md"):

@@ -100,9 +100,8 @@ def quote(lines: list[str]) -> str:
 
 # --- README blocks --------------------------------------------------------------------------------
 
-def comparison_details(c: Ctx) -> tuple[list[str], list[list[str]], str]:
+def comparison_details(c: Ctx) -> tuple[list[str], list[list[str]]]:
     m = c.m
-    claims = json.loads((ROOT / "evidence" / "claims.json").read_text(encoding="utf-8"))
     head = [c.t("Observed or documented", "实测或文档项"), "A · ACA Sandboxes",
             c.t("B · Foundry hosted agent", "B · Foundry hosted agent"),
             "C · AKS + agent-sandbox", "D · BYO-AKS", "E · E2B on Azure VM"]
@@ -183,23 +182,8 @@ def comparison_details(c: Ctx) -> tuple[list[str], list[list[str]], str]:
              c.one("d.pod_lost") + "；未测试被删会话的连续性"),
          c.t(c.one("e.ci.pod_lost") + ": after `kill`, a replacement sandbox until it is ready",
              c.one("e.ci.pod_lost") + "：`kill` 之后新建替代沙箱到就绪")],
-        [c.t("**Idle policy (official docs)**", "**空闲策略（官方说明）**"),
-         *(claims["paths"][letter][f"idle_policy_{c.lang}"] for letter in ("A", "B", "C", "D", "E"))],
     ]
-    spec = c.runs["a-aca-2026-10-09/agent-runs.json"]["sandbox_spec"]
-    observation = c.t(
-        f"**Local configuration and observation, not official idle policy:** A used "
-        f"{spec['auto_suspend_mode']} mode with a {spec['auto_suspend_seconds']} s auto-suspend setting. "
-        f"D's oldest pod was still Running at least {m['d.idle']['value']} min after creation; "
-        "this is pod age, not idle duration or a reclamation timeout. "
-        f"B's sessions read {state_counts(c, m['b.idle.state']['states'])} after {idle_minutes(m, 'b.idle')} min "
-        "without requests (2026-10-18).",
-        f"**本地配置与观察，不是官网空闲策略：** A 本次使用 {spec['auto_suspend_mode']} 模式，"
-        f"自动挂起设置为 {spec['auto_suspend_seconds']} s。D 最早的 pod 在创建至少 "
-        f"{m['d.idle']['value']} min 后仍为 Running；这是 pod 的年龄，不是空闲时长或回收超时。"
-        f"B 的会话在 {idle_minutes(m, 'b.idle')} 分钟没有请求后状态读到 {state_counts(c, m['b.idle.state']['states'])}"
-        "（2026-10-18）。")
-    return head, rows, observation
+    return head, rows
 
 
 # GitHub removes <wbr> and inline CSS. Soft hyphens and split code spans keep the full table wrappable.
@@ -243,9 +227,9 @@ def unwrap_table_layout(text: str) -> str:
 
 
 def b_comparison(c: Ctx) -> str:
-    head, rows, observation = comparison_details(c)
+    head, rows = comparison_details(c)
     return table([wrap_table_cell(cell) for cell in head],
-                 [[wrap_table_cell(cell) for cell in row] for row in rows]) + "\n" + observation + "\n"
+                 [[wrap_table_cell(cell) for cell in row] for row in rows]) + "\n"
 
 
 CI_TEMPLATE_URL = "https://github.com/e2b-dev/code-interpreter/tree/162a2a25b6a5ea5806749a437b96cbdc5bfc087e/template"

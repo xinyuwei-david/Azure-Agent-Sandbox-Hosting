@@ -153,11 +153,6 @@ def check_information_alignment(pages: dict[str, str]) -> list[str]:
             errors.append(f"README.md: {field} row differs from evidence/claims.json")
         if f"| {label_zh} | {values_zh} |" not in pages["README_CN.md"]:
             errors.append(f"README_CN.md: {field} row differs from evidence/claims.json")
-    for name, lang, label in (("README.md", "en", "**Idle policy (official docs)**"),
-                              ("README_CN.md", "zh", "**空闲策略（官方说明）**")):
-        policies = " | ".join(claims["paths"][letter][f"idle_policy_{lang}"] for letter in letters)
-        if f"| {label} | {policies} |" not in rd.unwrap_table_layout(pages[name]):
-            errors.append(f"{name}: official idle-policy row differs from evidence/claims.json")
     boundary_en = " | ".join(claims["paths"][letter]["boundary_en"] for letter in letters)
     boundary_zh = " | ".join(claims["paths"][letter]["boundary_zh"] for letter in letters)
     owner_en = " | ".join(claims["paths"][letter]["node_owner_en"] for letter in letters)
@@ -178,7 +173,6 @@ def check_information_alignment(pages: dict[str, str]) -> list[str]:
             "not the same container",
             "leaves out answer times",
             "stop and idle waiting are excluded",
-            "pod age, not idle duration",
         ],
         "README_CN.md": [
             "一般企业 agent 在 B 的限制可接受时先选 B。",
@@ -187,7 +181,6 @@ def check_information_alignment(pages: dict[str, str]) -> list[str]:
             "不是相同容器",
             "不比较回答时间",
             "不含停止和空闲等待",
-            "pod 的年龄，不是空闲时长",
         ],
         "VALIDATION.md": [
             "The workload contract is comparable, but the container is not identical",

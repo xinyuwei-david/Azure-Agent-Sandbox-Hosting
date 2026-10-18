@@ -63,11 +63,11 @@ def test_comparison_keeps_the_full_table_and_only_changes_wrapping(lang):
     metrics, runs = rd.load_inputs()
     c = rd.Ctx(metrics, runs, lang)
     block = rd.b_comparison(c)
-    header, details, observation = rd.comparison_details(c)
-    original = rd.table(header, details) + "\n" + observation + "\n"
+    header, details = rd.comparison_details(c)
+    original = rd.table(header, details) + "\n"
     assert rd.unwrap_table_layout(block) == original
     lines = [line for line in block.splitlines() if line.startswith("|")]
-    assert len(lines) == len(details) + 2 == 8
+    assert len(lines) == len(details) + 2 == 7
     assert all(len(line.split("|")[1:-1]) == 6 for line in lines)
     # The table compares sandbox lifecycle clocks only; answer times stay in VALIDATION.
     assert not any(("answer" if lang == "en" else "回答") in row[0] for row in details)

@@ -90,9 +90,7 @@ B 的“每会话一个、VM 级隔离”是 `SOURCE_FACT`，不是本地读回�
 | └ 子项：挂卷附加耗时 | 同一次归因实测&#8203;（2026-10-09）里 create → Running：不挂卷 1.6–&#8203;2.7 s&#8203;（只加镜像、VNet 或端口；n=7），挂卷 15.79–&#8203;25.12 s&#8203;（镜像 + VNet + 卷；n=2） | 无 | 测不出差别：apply → Ready 挂 PVC 中位数 16.46 s&#8203;（16.26–&#8203;16.81；n=3），不挂 中位数 16.45 s&#8203;（15.32–&#8203;18.9；n=3） | 无 | 无 |
 | **恢复到就绪** | **1.22 s** 中位数&#8203;（0.82–&#8203;4.46；n=3），恢复 → `Running`，不挂 Blob 卷&#8203;（2026-10-18） | 无法单独计时：`:stop` 后要等下一次请求才唤醒，这次请求的耗时包含一轮模型回答；保留 `$HOME`，无内存快照 | **15.93 s** 中位数&#8203;（15.87–&#8203;17.28；n=3），<code>operatingMode: </code><br><code>Running</code>&#8203; → Sandbox `Ready`，挂着 C 保留数据所需的 Blob PVC；无内存快照 | 无法单独计时：`:stop` 后由下一次请求启动新的会话 pod，这次请求的耗时包含一轮模型回答；之前写入的文件保留，无内存快照 | agent 实测中 **0.64 s** 中位数&#8203;（0.63–&#8203;1.43；n=3），<code>Sandbox.connect</code>&#8203; → 返回；不调模型、连续 20 次循环 0.38–&#8203;10.24 s，20 次里 17 次超过 1 s&#8203;（2026-10-18） |
 | **pod 或沙箱丢失 → 重新就绪** | 无法从外部制造：没有注入宿主机故障的接口，删除沙箱即结束会话 | 无法从外部制造：没有只杀掉会话沙箱的接口；显式停止与恢复见上方 | 中位数 24.79 s&#8203;（23.25–&#8203;25.24；n=3）；挂着 C 保留数据所需的 Blob PVC，对话接着继续 3/3&#8203;（2026-09-27：23.4 s，n=1） | 23.9 s&#8203;（n=1）；未测试被删会话的连续性 | 0.12 s&#8203;（n=1）：`kill` 之后新建替代沙箱到就绪 |
-| **空闲策略&#8203;（官方说明）** | [官网](https://learn.microsoft.com/azure/container-apps/sandboxes-overview#lifecycle-states)：可配置空闲自动挂起；可选 Memory 或 Disk 快照模式 | [官网](https://learn.microsoft.com/azure/foundry/agents/concepts/hosted-agents#sessions)：空闲超时 2–&#8203;60 min&#8203;（默认 15）后释放算力，保留 $HOME 和 /files；30 天不活跃后删除会话 | [官方 API](https://github.com/kubernetes-sigs/agent-sandbox/blob/v0.5.2/docs/api.md)：shutdown&shy;Time 是定时到期回收，不是按请求检测空闲；空闲回收需自行实现 | 未找到可核实的官方公开空闲策略；须向产品组确认 | [E2B 文档](https://e2b.dev/docs/sandbox)：按沙箱设置超时&#8203;（默认 5 min），支持显式 <code>beta_</code><br><code>pause</code>&#8203; / `connect` |
 
-**本地配置与观察，不是官网空闲策略：** A 本次使用 Memory 模式，自动挂起设置为 900 s。D 最早的 pod 在创建至少 87 min 后仍为 Running；这是 pod 的年龄，不是空闲时长或回收超时。B 的会话在 17 分钟没有请求后状态读到 `active` 1/3、`idle` 2/3（2026-10-18）。
 <!-- END GENERATED: comparison -->
 
 值得注意的几点：
