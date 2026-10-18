@@ -16,8 +16,8 @@ import measure_responses
 ROOT = Path(__file__).resolve().parents[1]
 FIX = ROOT / "tests" / "fixtures"
 TOOLS = ["aca_sandbox.py", "measure_aca.py", "measure_responses.py", "measure_e2b.py", "e2b_agent.py", "measure_sessions.py",
-         "measure_code_interpreter.py", "check_isolation.py", "build_measurements.py", "render_docs.py", "build_diagrams.py", "export_evidence.py",
-         "validate_docs.py"]
+         "measure_code_interpreter.py", "measure_c.py", "check_isolation.py", "build_measurements.py", "render_docs.py",
+         "build_diagrams.py", "export_evidence.py", "validate_docs.py"]
 
 
 @pytest.mark.parametrize("tool", TOOLS)
@@ -866,3 +866,211 @@ def test_code_interpreter_check_needs_settings(monkeypatch, tmp_path):
     for k in ("E2B_API_URL", "E2B_SANDBOX_URL", "E2B_API_KEY"):
         monkeypatch.delenv(k, raising=False)
     assert mci.main(["--out-dir", str(tmp_path)]) == 2
+
+
+# --- 2026-10-18 supplementary modes: header auth, idle resume, A and C concurrency, C lifecycle ---------------
+
+def test_responses_header_auth_is_sent_and_malformed_header_is_rejected(monkeypatch):
+    monkeypatch.setenv("RESPONSES_AUTH_HEADER", "Ocp-Apim-Subscription-Key: test-key")
+    assert measure_responses.token() == ("Ocp-Apim-Subscription-Key", "test-key")
+    sent = {}
+
+    def urlopen(req, timeout):
+        sent.update({k.lower(): v for k, v in req.header_items()})
+        raise measure_responses.urllib.error.URLError("offline")
+
+    monkeypatch.setattr(measure_responses.urllib.request, "urlopen", urlopen)
+    out = measure_responses.invoke("https://example.com/responses", measure_responses.token(), "Hi")
+    assert sent["ocp-apim-subscription-key"] == "test-key" and "authorization" not in sent
+    assert out["http"] is None and "test-key" not in json.dumps(out)
+    measure_responses.invoke("https://example.com/responses", "entra-token", "Hi")
+    assert sent["authorization"] == "Bearer entra-token"
+    monkeypatch.setenv("RESPONSES_AUTH_HEADER", "no-colon-here")
+    with pytest.raises(RuntimeError, match="Header-Name: value"):
+        measure_responses.token()
+
+
+@pytest.mark.parametrize("goes_idle,code", [(True, 0), (False, 1)])
+def test_sessions_idle_resume_needs_an_idle_session(monkeypatch, tmp_path, goes_idle, code):
+    api = FakeSessionsAPI()
+    waits = []
+
+    def sleep(seconds):
+        if seconds >= 60:
+            waits.append(seconds)
+            if goes_idle:
+                api.sessions.update({sid: "idle" for sid in api.sessions})
+
+    monkeypatch.setattr(measure_sessions, "auth_header", lambda: ("Ocp-Apim-Subscription-Key", "test-key"))
+    monkeypatch.setattr(measure_sessions.Client, "call", lambda self, *a, **k: api.call(*a, **k))
+    monkeypatch.setattr(measure_sessions.time, "sleep", sleep)
+    args = ["--project-endpoint", "https://example.com/api/projects/p", "--agent", "maf-agent", "--version", "2",
+            "--runs", "1", "--resume-after", "idle", "--idle-wait", "1020", "--path", "D",
+            "--out", str(tmp_path / "raw.json")]
+    assert measure_sessions.main(args) == code
+    raw = json.loads((tmp_path / "raw.json").read_text(encoding="utf-8"))
+    run = raw["runs"][0]
+    assert waits == [1020] and "stop" not in run and raw["resume_after"] == "idle"
+    assert run["idle"]["state_before_resume"] == ("idle" if goes_idle else "active")
+    assert raw["path"] == "D" and raw["what"].startswith("BYO-AKS") and "1020 s without requests" in raw["what"]
+    assert raw["summary"]["runs_complete"]["count"] == 1 and raw["summary"]["stop_to_idle_s"]["n"] == 0
+    assert not api.sessions and "test-key" not in json.dumps(raw)
+
+
+@pytest.mark.parametrize("forget", (set(), {1}))
+def test_aca_scale_counts_only_sessions_that_remember(monkeypatch, forget):
+    class Box:
+        def __init__(self, k):
+            self.k, self.memory, self.deleted = k, None, False
+
+        def delete(self):
+            self.deleted = True
+
+    boxes = []
+
+    def create(**kwargs):
+        boxes.append(Box(int(kwargs["agent_id"].rsplit("-", 2)[-2])))
+        return boxes[-1], SimpleNamespace(id=f"sandbox-{boxes[-1].k}", state="Running")
+
+    def ask(box, question):
+        if question.startswith("Remember "):
+            box.memory = None if box.k in forget else question.split()[1].rstrip(".")
+            return {"guest_s": 1.0, "response": "OK", "history_length": 1}
+        return {"guest_s": 1.0, "response": box.memory or "I don't know", "history_length": 2}
+
+    group = SimpleNamespace(_do_create_sandbox=create, get_sandbox=lambda _: None)
+    monkeypatch.setattr(aca_sandbox, "agent_environment", lambda cfg, agent_id: {"agent_id": agent_id})
+    monkeypatch.setattr(aca_sandbox, "config_kwargs", lambda mode, cfg, image, env: env)
+    monkeypatch.setattr(aca_sandbox, "poll_state", lambda getter, targets: (
+        0, SimpleNamespace(state="running", vmm_type="cloudhypervisor"), 1))
+    monkeypatch.setattr(aca_sandbox, "ask", ask)
+    out = measure_aca.at_once(group, {}, "image-1", 3)
+    assert out["sessions_at_once"] == 3 and out["answered"] == 3 - len(forget)
+    assert sorted(b.k for b in boxes) == [0, 1, 2] and all(b.deleted for b in boxes)
+    assert [s["remembered"] for s in out["sessions"]] == [k not in forget for k in range(3)]
+    assert out["sessions"][0]["turn1"]["response"] == "OK"
+
+
+import measure_c  # noqa: E402
+
+C_TEMPLATE = {
+    "apiVersion": "agents.x-k8s.io/v1alpha1", "kind": "Sandbox",
+    "metadata": {"name": "agent-host", "namespace": "agent", "uid": "workshop-uid"},
+    "spec": {"operatingMode": "Running", "podTemplate": {
+        "metadata": {"labels": {"app": "agent-host"}},
+        "spec": {"runtimeClassName": "kata-vm-isolation", "serviceAccountName": "agent-host",
+                 "containers": [{"name": "agent-host", "image": "example.azurecr.io/agent-host:latest",
+                                 "env": [{"name": "AGENT_ID",
+                                          "valueFrom": {"fieldRef": {"fieldPath": "metadata.name"}}},
+                                         {"name": "STATE_MOUNT_PATH", "value": "/data"}],
+                                 "volumeMounts": [{"name": "state", "mountPath": "/data"},
+                                                  {"name": "tmp", "mountPath": "/tmp"}]}],
+                 "volumes": [{"name": "state", "persistentVolumeClaim": {"claimName": "agent-state"}},
+                             {"name": "tmp", "emptyDir": {}}]}}},
+}
+
+
+@pytest.mark.parametrize("pvc", (False, True))
+def test_c_manifest_copies_the_workshop_spec_under_a_new_label(pvc):
+    before = json.dumps(C_TEMPLATE, sort_keys=True)
+    m = measure_c.sandbox_manifest(C_TEMPLATE, "agent-host-measure-cold-1-1", "agent", pvc, "20261018t000000")
+    assert json.dumps(C_TEMPLATE, sort_keys=True) == before
+    assert m["metadata"] == {"name": "agent-host-measure-cold-1-1", "namespace": "agent",
+                             "labels": {"app": "agent-host-measure", "measure-run": "20261018t000000"}}
+    pod = m["spec"]["podTemplate"]
+    assert pod["metadata"]["labels"]["app"] == "agent-host-measure" and m["spec"]["operatingMode"] == "Running"
+    assert pod["spec"]["runtimeClassName"] == "kata-vm-isolation"
+    names = [v["name"] for v in pod["spec"]["volumes"]]
+    mounts = [v["name"] for v in pod["spec"]["containers"][0]["volumeMounts"]]
+    assert names == mounts == (["state", "tmp"] if pvc else ["tmp"])
+    # AGENT_ID comes from the pod name, so every copy keeps its conversation in its own state file
+    assert pod["spec"]["containers"][0]["env"] == C_TEMPLATE["spec"]["podTemplate"]["spec"]["containers"][0]["env"]
+
+
+class FakeCSandbox:
+    """measure_c.Sandbox for one pod whose conversation survives a new pod only when it is on the volume."""
+
+    def __init__(self, keeps_state, history=0):
+        self.keeps_state, self.uid, self.history, self.mode, self.deleted = keeps_state, 1, history, "Running", False
+
+    def new_pod(self):
+        self.uid += 1
+        if not self.keeps_state:
+            self.history = 0
+
+    def get(self):
+        ready = "True" if self.mode == "Running" else "False"
+        return {"status": {"conditions": [{"type": "Ready", "status": ready, "reason": self.mode}]}}
+
+    def pod(self):
+        return {"metadata": {"uid": str(self.uid), "name": "pod"}} if self.mode == "Running" else None
+
+    def wait(self, test, limit, what):
+        assert test(), what
+        return 0.0
+
+    def ready(self, old_uid=None):
+        return self.mode == "Running" and str(self.uid) != old_uid
+
+    def ask(self, question):
+        self.history += 1
+        return {"guest_s": 1.0, "exec_wall_s": 2.0, "response": "2", "history_length": self.history}
+
+    def server_times(self):
+        return {"node": "aks-kata-0"}
+
+    def patch_mode(self, mode):
+        self.mode = mode
+        if mode == "Running":
+            self.new_pod()
+
+    def delete(self):
+        self.deleted = True
+        return True
+
+
+@pytest.mark.parametrize("keeps_state", (True, False))
+def test_c_pvc_run_needs_the_conversation_to_survive_pod_loss_and_suspend(monkeypatch, keeps_state):
+    box = FakeCSandbox(keeps_state, history=7 if keeps_state else 0)
+    monkeypatch.setattr(measure_c, "Sandbox", lambda ns, name, container: box)
+    monkeypatch.setattr(measure_c, "apply", lambda objs: None)
+    monkeypatch.setattr(measure_c, "kubectl", lambda *args, **kwargs: box.new_pod() if args[:2] == ("delete", "pod")
+                        else None)
+    monkeypatch.setattr(measure_c.time, "sleep", lambda _: None)
+    rec = measure_c.cold_run(C_TEMPLATE, "agent", "agent-host", "20261018t000000", 1, pvc=True)
+    assert rec["deleted"] and box.deleted
+    if keeps_state:
+        assert "error" not in rec and rec["history_grew"]
+        assert [rec[k]["history_length"] for k in ("first", "follow_up", "after_pod_delete", "after_resume")] == [8, 9, 10, 11]
+        assert rec["suspended_condition"] == {"status": "False", "reason": "Suspended"}
+        assert rec["resume_to_answer_s"] == pytest.approx(rec["resume_to_ready_s"] + 1.0)
+    else:
+        assert rec["history_grew"] is False and "did not keep growing" in rec["error"]
+
+
+def test_c_history_must_grow_at_every_turn():
+    assert measure_c.history_grew([{"history_length": n} for n in (1, 2, 3, 4)])
+    assert not measure_c.history_grew([{"history_length": n} for n in (1, 2, 1, 2)])
+    assert not measure_c.history_grew([{"history_length": 1}, {"history_length": None}])
+
+
+def test_c_scale_counts_only_sessions_that_remember(monkeypatch):
+    boxes = {}
+
+    class Box(FakeCSandbox):
+        def __init__(self, name):
+            super().__init__(True)
+            self.name, self.word = name, None
+
+        def ask(self, question):
+            if question.startswith("Remember "):
+                self.word = None if self.name.endswith("-1-" + "000000") else question.split()[1].rstrip(".")
+                return {"guest_s": 1.0, "exec_wall_s": 2.0, "response": "OK", "history_length": 1}
+            return {"guest_s": 1.0, "exec_wall_s": 2.0, "response": self.word or "nothing", "history_length": 2}
+
+    monkeypatch.setattr(measure_c, "Sandbox", lambda ns, name, container: boxes.setdefault(name, Box(name)))
+    applied = []
+    monkeypatch.setattr(measure_c, "apply", lambda objs: applied.extend(o["metadata"]["name"] for o in objs))
+    out = measure_c.at_once(C_TEMPLATE, "agent", "agent-host", "20261018t000000", 3)
+    assert len(applied) == 3 and out["sessions_at_once"] == 3 and out["answered"] == 2 and out["deleted"] == 3
+    assert [s["remembered"] for s in out["sessions"]] == [True, False, True] and out["nodes"] == ["aks-kata-0"]

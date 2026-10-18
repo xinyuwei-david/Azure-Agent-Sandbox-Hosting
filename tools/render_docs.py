@@ -20,6 +20,7 @@ import html
 import json
 import re
 import sys
+from collections import Counter
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -107,8 +108,8 @@ def cold_start_formulas(c: Ctx) -> list[str]:
             "**Ready:** create session → `active`<br>**First:** first request → answer on the active session.<br>Two client requests added.",
             "**Ready**：创建会话 → `active`<br>**First**：就绪会话的首轮请求 → 回答。<br>两次客户端请求耗时相加。"),
         summed + "<br><br>" + c.t(
-            "**Ready:** `kubectl apply` → Sandbox Ready, including the Blob PVC mount.<br>**First:** first request → answer at the LoadBalancer.<br>Two timers added.",
-            "**Ready**：`kubectl apply` → Sandbox Ready，含挂载 Blob PVC。<br>**First**：在 LoadBalancer 发首轮请求 → 回答。<br>两段计时相加。"),
+            "**Ready:** `kubectl apply` → Sandbox Ready, with or without the Blob PVC.<br>**First:** first request → answer, timed inside the pod (at the LoadBalancer on 2026-09-27).<br>Two timers added.",
+            "**Ready**：`kubectl apply` → Sandbox Ready，挂或不挂 Blob PVC。<br>**First**：首轮请求 → 回答，在 pod 内计时（2026-09-27 在 LoadBalancer 处计时）。<br>两段计时相加。"),
         residual + "<br><br>" + c.t(
             "**Cold:** client POST → full response.<br>**Pod:** pod created → Ready.<br>**Other:** Cold − Pod (derived; endpoint/session/agent path), not a separately timed Ready → answer interval.",
             "**Cold**：客户端 POST → 完整响应。<br>**Pod**：pod 创建 → Ready。<br>**Other**：同次 Cold − Pod（推导；含端点、会话和 agent 链路），不是独立计时的 Ready → 回答。"),
@@ -135,12 +136,15 @@ def comparison_details(c: Ctx) -> tuple[list[str], list[list[str]], str]:
          c.t(f"**{num(m['b.sess.cold']['median'])} s** median ({rng(m['b.sess.cold'])}; n={m['b.sess.cold']['n']}), "
              f"added per run; one request that auto-creates the session on the first `/responses`: "
              f"{num(m['b.cold_gateway']['value'])} s (gateway model route) / {num(m['b.cold_direct']['value'])} s "
-             "(direct), n=1 each",
+             f"(direct), n=1 each; 2026-10-18 through the gateway, D protocol: {c.med('b.d.cold')}",
              f"**{num(m['b.sess.cold']['median'])} s** 中位数（{rng(m['b.sess.cold'])}；n={m['b.sess.cold']['n']}），"
              f"每次实测相加；首次 `/responses` 自动建会话、一次请求完成：{num(m['b.cold_gateway']['value'])} s"
-             f"（gateway 模型路由）/ {num(m['b.cold_direct']['value'])} s（direct），各 n=1"),
-         c.t("not measured: C keeps state across suspend only through the Blob PVC, so every measured cold start mounted it",
-             "未测：C 只能靠 Blob PVC 跨挂起保状态，所以实测的冷启动都挂了卷"),
+             f"（gateway 模型路由）/ {num(m['b.cold_direct']['value'])} s（direct），各 n=1"
+             f"；2026-10-18 经网关、D 口径：{c.med('b.d.cold')}"),
+         c.t(f"**{num(m['c.n.cold']['median'])} s** median ({rng(m['c.n.cold'])}; n={m['c.n.cold']['n']}), added per "
+             "run; answer timed inside the pod",
+             f"**{num(m['c.n.cold']['median'])} s** 中位数（{rng(m['c.n.cold'])}；n={m['c.n.cold']['n']}），每次实测相加；"
+             "回答在 pod 内计时"),
          c.t(f"**{num(m['d.cold']['median'])} s** median ({rng(m['d.cold'])}; n={m['d.cold']['n']}), "
              "one request via the Foundry endpoint",
              f"**{num(m['d.cold']['median'])} s** 中位数（{rng(m['d.cold'])}；n={m['d.cold']['n']}），经 Foundry 端点一次请求"),
@@ -155,7 +159,8 @@ def comparison_details(c: Ctx) -> tuple[list[str], list[list[str]], str]:
              f"加端口 {rng(m['a.attr.port'])} s（n={m['a.attr.port']['n']}）"),
          c.t(f"{c.med('b.sess.create')}, `POST .../endpoint/sessions` → `active`",
              f"{c.med('b.sess.create')}，`POST .../endpoint/sessions` → `active`"),
-         c.t("not measured without the PVC", "未测（不挂 PVC）"),
+         c.t(f"{c.med('c.n.apply_ready')}, `kubectl apply` → Sandbox Ready",
+             f"{c.med('c.n.apply_ready')}，`kubectl apply` → Sandbox Ready"),
          c.t(f"{rng(m['d.pod_ready'])} s (n={m['d.pod_ready']['n']}) with the image cached; "
              f"{num(m['d.pod_ready_fresh']['min'])} s on a fresh node (n={m['d.pod_ready_fresh']['n']})",
              f"镜像已缓存 {rng(m['d.pod_ready'])} s（n={m['d.pod_ready']['n']}）；新节点 "
@@ -168,8 +173,10 @@ def comparison_details(c: Ctx) -> tuple[list[str], list[list[str]], str]:
          c.t(f"{c.med('b.sess.first')} on the active session; the service recorded "
              f"{rng(m['b.sess.first_server'])} s of it as generation",
              f"已就绪会话上 {c.med('b.sess.first')}；其中服务端记录的生成时间 {rng(m['b.sess.first_server'])} s"),
-         c.t(f"{num(m['c.first']['value'])} s (n=1), at the LoadBalancer",
-             f"{num(m['c.first']['value'])} s（n=1），在 LoadBalancer 处计时"),
+         c.t(f"{c.med('c.n.first')}, timed inside the pod; {num(m['c.first']['value'])} s at the LoadBalancer "
+             "(2026-09-27, n=1)",
+             f"{c.med('c.n.first')}，在 pod 内计时；在 LoadBalancer 处计时 {num(m['c.first']['value'])} s"
+             "（2026-09-27，n=1）"),
          c.t(f"{c.med('d.first_after_ready')} derived remainder: paired cold total minus pod create → Ready; "
              f"not a separately timed Ready → answer interval (agent turn {rng(m['d.agent_turn'])} s)",
              f"推导余量 {c.med('d.first_after_ready')}：同次冷启动总耗时减 pod 创建 → Ready；"
@@ -182,10 +189,12 @@ def comparison_details(c: Ctx) -> tuple[list[str], list[list[str]], str]:
              f"**{num(m['a.cold']['median'])} s** 中位数（{rng(m['a.cold'])}；n={m['a.cold']['n']}）；SDK 创建 + 沙箱内回答"),
          c.t("no external volume (the platform restores `$HOME` and `/files`)",
              "不挂外部卷（平台恢复 `$HOME` 和 `/files`）"),
-         c.t(f"**{num(m['c.cold']['value'])} s** (n=1; apply → Ready {num(m['c.apply_ready']['value'])} s + answer "
-             f"{num(m['c.first']['value'])} s)",
-             f"**{num(m['c.cold']['value'])} s**（n=1；apply → Ready {num(m['c.apply_ready']['value'])} s + 回答 "
-             f"{num(m['c.first']['value'])} s）"),
+         c.t(f"**{num(m['c.p.cold']['median'])} s** median ({rng(m['c.p.cold'])}; n={m['c.p.cold']['n']}), added per "
+             f"run; 2026-09-27: {num(m['c.cold']['value'])} s (n=1; apply → Ready {num(m['c.apply_ready']['value'])} s "
+             f"+ answer {num(m['c.first']['value'])} s at the LoadBalancer)",
+             f"**{num(m['c.p.cold']['median'])} s** 中位数（{rng(m['c.p.cold'])}；n={m['c.p.cold']['n']}），每次实测相加；"
+             f"2026-09-27：{num(m['c.cold']['value'])} s（n=1；apply → Ready {num(m['c.apply_ready']['value'])} s + "
+             f"在 LoadBalancer 处回答 {num(m['c.first']['value'])} s）"),
          c.t("no external volume in the session pod", "会话 pod 未挂外部卷"),
          c.t("no external volume (templates and snapshots stay on the host VM's OS disk)",
              "不挂外部卷（模板和快照存在宿主 VM 的系统盘上）")],
@@ -195,17 +204,22 @@ def comparison_details(c: Ctx) -> tuple[list[str], list[list[str]], str]:
              f"比仅镜像多 +{num(m['a.blob_mount_overhead']['value'])} s 中位数（create → Running {c.med('a.create')}）；"
              "Memory 快照无需挂卷"),
          c.t("none", "无"),
-         c.t(f"not separable: no run without the PVC (apply → Ready {num(m['c.apply_ready']['value'])} s includes it, n=1)",
-             f"无法拆出：没有不挂 PVC 的实测（apply → Ready {num(m['c.apply_ready']['value'])} s 已包含挂卷，n=1）"),
+         c.t(f"none measurable: apply → Ready {c.med('c.p.apply_ready')} with the PVC, {c.med('c.n.apply_ready')} "
+             "without",
+             f"测不出差别：apply → Ready 挂 PVC {c.med('c.p.apply_ready')}，不挂 {c.med('c.n.apply_ready')}"),
          c.t("none", "无"),
          c.t("none", "无")],
         [c.t("**Follow-up turn, same session**", "**同一会话的后续回答**"),
          c.med("a.warm"),
          c.t(f"{c.vals('b.warm_gateway')} (`b-2026-09-27`, gateway model route); "
-             f"{c.med('b.sess.warm')} (`b-2026-10-15-sessions`, direct model route)",
+             f"{c.med('b.sess.warm')} (`b-2026-10-15-sessions`, direct model route); "
+             f"{c.med('b.d.warm')} (`b-2026-10-18-perf`, D protocol)",
              f"{c.vals('b.warm_gateway')}（`b-2026-09-27`，gateway 模型路由）；"
-             f"{c.med('b.sess.warm')}（`b-2026-10-15-sessions`，direct 模型路由）"),
-         c.one("c.warm"), c.med("d.warm"),
+             f"{c.med('b.sess.warm')}（`b-2026-10-15-sessions`，direct 模型路由）；"
+             f"{c.med('b.d.warm')}（`b-2026-10-18-perf`，D 口径）"),
+         c.t(f"{c.med('c.n.warm')}, inside the pod; {c.one('c.warm')} at the LoadBalancer (2026-09-27)",
+             f"{c.med('c.n.warm')}，在 pod 内计时；在 LoadBalancer 处 {c.one('c.warm')}（2026-09-27）"),
+         c.med("d.warm"),
          c.t(f"{c.med('e.ci.warm')} (A protocol); {c.med('e.ci.d_warm')} (D protocol)",
              f"{c.med('e.ci.warm')}（A 口径）；{c.med('e.ci.d_warm')}（D 口径）")],
         [c.t("**Suspend / pause and wake until ready**", "**挂起 / 暂停与恢复就绪耗时**"),
@@ -216,11 +230,12 @@ def comparison_details(c: Ctx) -> tuple[list[str], list[list[str]], str]:
          c.t(f"`:stop` → idle {c.med('b.sess.stop')}; compute released, `$HOME` kept, no memory snapshot; "
              "wakes on the next request (next row)",
              f"`:stop` → idle {c.med('b.sess.stop')}；释放算力、保留 `$HOME`，无内存快照；下一次请求时唤醒（见下一行）"),
-         c.t(f"suspend → pod gone {num(m['c.suspend']['value'])} s (n=1); resume → Ready "
-             f"{num(m['c.resume_ready']['value'])} s, LoadBalancer healthy {num(m['c.resume_lb']['value'])} s (n=1)",
-             f"挂起 → pod 消失 {num(m['c.suspend']['value'])} s（n=1）；恢复 → Ready "
-             f"{num(m['c.resume_ready']['value'])} s，LoadBalancer 健康 {num(m['c.resume_lb']['value'])} s（n=1）"),
-         claims["paths"]["D"][f"memory_suspend_{c.lang}"],
+         c.t(f"suspend → pod gone {c.med('c.p.suspend')}; resume → Ready {c.med('c.p.resume_ready')}; no memory "
+             "snapshot",
+             f"挂起 → pod 消失 {c.med('c.p.suspend')}；恢复 → Ready {c.med('c.p.resume_ready')}；无内存快照"),
+         c.t(f"`:stop` → idle {c.med('d.sess.stop')}; the session pod ends, the file written before is kept, no "
+             "memory snapshot; wakes on the next request (next row)",
+             f"`:stop` → idle {c.med('d.sess.stop')}；会话 pod 结束，之前写入的文件保留，无内存快照；下一次请求时唤醒（见下一行）"),
          c.t(f"pause {c.med('e.ci.pause')}; resume → Running {c.med('e.ci.resume')}",
              f"暂停 {c.med('e.ci.pause')}；恢复 → Running {c.med('e.ci.resume')}")],
         [c.t("**Resume request → first answer (stop excluded)**", "**发起恢复 → 第一个回答（不含停止）**"),
@@ -228,14 +243,23 @@ def comparison_details(c: Ctx) -> tuple[list[str], list[list[str]], str]:
              c.med("a.recover") + f"；恢复本身另行统计的中位数 {num(m['a.resume']['median'])} s"),
          c.t(f"{c.med('b.sess.resume')}: the next turn on the stopped session gets new compute with `$HOME` restored; "
              f"file written before the stop read back {k['files']}/{k['n']}, question count kept growing "
-             f"{k['conversation']}/{k['n']}",
+             f"{k['conversation']}/{k['n']}. After {idle_minutes(m, 'b.idle')} min without requests the status "
+             f"read {state_counts(c, m['b.idle.state']['states'])} and the next turn took {c.med('b.idle.next')}; "
+             f"after {idle_minutes(m, 'b.idle5')} min, {c.med('b.idle5.next')}",
              f"{c.med('b.sess.resume')}：停止后同一会话的下一轮请求分到新算力并恢复 `$HOME`；"
-             f"停止前写入的文件读回 {k['files']}/{k['n']}，问题计数持续增长 {k['conversation']}/{k['n']}"),
-         c.t(f"{num(m['c.resume_answer']['value'])} s (n=1; Ready {num(m['c.resume_ready']['value'])} s, "
-             f"LoadBalancer healthy {num(m['c.resume_lb']['value'])} s)",
-             f"{num(m['c.resume_answer']['value'])} s（n=1；Ready {num(m['c.resume_ready']['value'])} s，"
-             f"LoadBalancer 健康 {num(m['c.resume_lb']['value'])} s）"),
-         claims["paths"]["D"][f"memory_suspend_{c.lang}"],
+             f"停止前写入的文件读回 {k['files']}/{k['n']}，问题计数持续增长 {k['conversation']}/{k['n']}。"
+             f"{idle_minutes(m, 'b.idle')} 分钟没有请求后，状态读到 {state_counts(c, m['b.idle.state']['states'])}，"
+             f"下一轮：{c.med('b.idle.next')}；{idle_minutes(m, 'b.idle5')} 分钟后：{c.med('b.idle5.next')}"),
+         c.t(f"{c.med('c.p.resume_answer')}: Running → Ready, then the answer inside the pod; the conversation went "
+             f"on from the Blob PVC {m['c.p.state_kept']['count']}/{m['c.p.state_kept']['n']}",
+             f"{c.med('c.p.resume_answer')}：Running → Ready，再加 pod 内的回答；对话从 Blob PVC 接着继续 "
+             f"{m['c.p.state_kept']['count']}/{m['c.p.state_kept']['n']}"),
+         c.t(f"{c.med('d.sess.resume')}: the next turn on the stopped session starts a new pod; file read back "
+             f"{m['d.sess.state_kept']['files']}/{m['d.sess.state_kept']['n']}, question count kept growing "
+             f"{m['d.sess.state_kept']['conversation']}/{m['d.sess.state_kept']['n']}",
+             f"{c.med('d.sess.resume')}：停止后同一会话的下一轮请求启动新 pod；文件读回 "
+             f"{m['d.sess.state_kept']['files']}/{m['d.sess.state_kept']['n']}，问题计数持续增长 "
+             f"{m['d.sess.state_kept']['conversation']}/{m['d.sess.state_kept']['n']}"),
          c.t(c.med("e.ci.recover") + f"; separately reported resume-only median {num(m['e.ci.resume']['median'])} s",
              c.med("e.ci.recover") + f"；恢复本身另行统计的中位数 {num(m['e.ci.resume']['median'])} s")],
         [c.t("**Pod or sandbox lost → ready again**", "**pod 或沙箱丢失 → 重新就绪**"),
@@ -243,8 +267,10 @@ def comparison_details(c: Ctx) -> tuple[list[str], list[list[str]], str]:
              "无法从外部制造：没有注入宿主机故障的接口，删除沙箱即结束会话"),
          c.t("not exercisable: no API kills only a session's sandbox; explicit stop and resume are above",
              "无法从外部制造：没有只杀掉会话沙箱的接口；显式停止与恢复见上方"),
-         c.t(c.one("c.pod_lost") + "; same Sandbox state restored",
-             c.one("c.pod_lost") + "；同一 Sandbox 的状态已恢复"),
+         c.t(c.med("c.p.pod_lost") + f"; the conversation went on from the Blob PVC "
+             f"{m['c.p.state_kept']['count']}/{m['c.p.state_kept']['n']} (2026-09-27: {num(m['c.pod_lost']['value'])} s, n=1)",
+             c.med("c.p.pod_lost") + f"；对话从 Blob PVC 接着继续 {m['c.p.state_kept']['count']}/{m['c.p.state_kept']['n']}"
+             f"（2026-09-27：{num(m['c.pod_lost']['value'])} s，n=1）"),
          c.t(c.one("d.pod_lost") + "; deleted session continuity not tested",
              c.one("d.pod_lost") + "；未测试被删会话的连续性"),
          c.t(c.one("e.ci.pod_lost") + f"; another live session answered in {num(m['e.ci.other_session_followup']['value'])} s",
@@ -252,11 +278,19 @@ def comparison_details(c: Ctx) -> tuple[list[str], list[list[str]], str]:
         [c.t("**Idle policy (official docs)**", "**空闲策略（官方说明）**"),
          *(claims["paths"][letter][f"idle_policy_{c.lang}"] for letter in ("A", "B", "C", "D", "E"))],
         [c.t("**Capacity**", "**容量**"),
-         c.t("serverless; default 500 concurrent active cores (2000 standard limit, 20000 in our subscription) and 3000 requests/min ([docs](https://sandboxes.azure.com/docs/sandboxes/limits)); stopped sandboxes do not count",
-             "无服务器；默认 500 并发活跃核（标准上限 2000，本订阅实查 20000）及 3000 请求/分钟（[文档](https://sandboxes.azure.com/docs/sandboxes/limits)）；已停止的沙箱不计入"),
-         c.t("one VM-isolated sandbox per session, scaled per session with no replica count or warm pool to configure ([docs](https://learn.microsoft.com/azure/foundry/agents/concepts/hosted-agents#scaling-and-right-sizing)); up to 20 GiB disk per session (20% system-reserved) and 50 MB per uploaded file",
-             "每个会话一个 VM 隔离的沙箱，按会话扩缩，没有副本数或预热池可配置（[文档](https://learn.microsoft.com/azure/foundry/agents/concepts/hosted-agents#scaling-and-right-sizing)）；单会话最高 20 GiB 磁盘（系统预留 20%），单个上传文件最大 50 MB"),
-         c.t("your Kata node pool", "你的 Kata 节点池"),
+         c.t("serverless; default 500 concurrent active cores (2000 standard limit, 20000 in our subscription) and 3000 requests/min ([docs](https://sandboxes.azure.com/docs/sandboxes/limits)); stopped sandboxes do not count"
+             f"; 2026-10-18: 4 and 8 full-specification sandboxes at once answered {m['a.c4']['answered']}/{m['a.c4']['n']} "
+             f"and {m['a.c8']['answered']}/{m['a.c8']['n']}",
+             "无服务器；默认 500 并发活跃核（标准上限 2000，本订阅实查 20000）及 3000 请求/分钟（[文档](https://sandboxes.azure.com/docs/sandboxes/limits)）；已停止的沙箱不计入"
+             f"；2026-10-18：同时创建 4 个和 8 个完整规格沙箱，分别回答 {m['a.c4']['answered']}/{m['a.c4']['n']} "
+             f"和 {m['a.c8']['answered']}/{m['a.c8']['n']}"),
+         c.t("one VM-isolated sandbox per session, scaled per session with no replica count or warm pool to configure ([docs](https://learn.microsoft.com/azure/foundry/agents/concepts/hosted-agents#scaling-and-right-sizing)); up to 20 GiB disk per session (20% system-reserved) and 50 MB per uploaded file"
+             f"; 2026-10-18: 4 and 8 new sessions at once answered {m['b.d.c4']['answered']}/{m['b.d.c4']['n']} and "
+             f"{m['b.d.c8']['answered']}/{m['b.d.c8']['n']}",
+             "每个会话一个 VM 隔离的沙箱，按会话扩缩，没有副本数或预热池可配置（[文档](https://learn.microsoft.com/azure/foundry/agents/concepts/hosted-agents#scaling-and-right-sizing)）；单会话最高 20 GiB 磁盘（系统预留 20%），单个上传文件最大 50 MB"
+             f"；2026-10-18：同时开 4 个和 8 个新会话，分别回答 {m['b.d.c4']['answered']}/{m['b.d.c4']['n']} 和 "
+             f"{m['b.d.c8']['answered']}/{m['b.d.c8']['n']}"),
+         c_capacity(c),
          c.t(f"observed at most {m['d.capacity']['per_node']} per {m['d.capacity']['node_sku']} node; "
              f"{m['d.capacity']['max_sessions']} on {m['d.capacity']['n']} nodes; "
              + ", ".join(f"`{code}`" for n in (4, 8) for code in m[f'd.c{n}']['refused_codes']),
@@ -304,10 +338,14 @@ def comparison_details(c: Ctx) -> tuple[list[str], list[list[str]], str]:
         f"**Local configuration and observation, not official idle policy:** A used "
         f"{spec['auto_suspend_mode']} mode with a {spec['auto_suspend_seconds']} s auto-suspend setting. "
         f"D's oldest pod was still Running at least {m['d.idle']['value']} min after creation; "
-        "this is pod age, not idle duration or a reclamation timeout.",
+        "this is pod age, not idle duration or a reclamation timeout. "
+        f"B's sessions read {state_counts(c, m['b.idle.state']['states'])} after {idle_minutes(m, 'b.idle')} min "
+        "without requests (2026-10-18).",
         f"**本地配置与观察，不是官网空闲策略：** A 本次使用 {spec['auto_suspend_mode']} 模式，"
         f"自动挂起设置为 {spec['auto_suspend_seconds']} s。D 最早的 pod 在创建至少 "
-        f"{m['d.idle']['value']} min 后仍为 Running；这是 pod 的年龄，不是空闲时长或回收超时。")
+        f"{m['d.idle']['value']} min 后仍为 Running；这是 pod 的年龄，不是空闲时长或回收超时。"
+        f"B 的会话在 {idle_minutes(m, 'b.idle')} 分钟没有请求后状态读到 {state_counts(c, m['b.idle.state']['states'])}"
+        "（2026-10-18）。")
     return head, rows, observation
 
 
@@ -495,6 +533,7 @@ def b_runs(c: Ctx) -> str:
              f"{m['e.ci.c8']['answered']}/{m['e.ci.c8']['n']} 回答（大页池已满）；"
              f"{num(m['e.ci.pod_lost']['value'])} s 后替代沙箱就绪；`HUGEPAGES=4096` 时空闲可放 "
              f"{m['e.ci.idle']['ci_4096']} 个 `code-interpreter-v1` 或 {m['e.ci.idle']['base_4096']} 个 `base` 沙箱")],
+        *runs_20261018(c),
     ]
     order = json.loads((ROOT / "evidence" / "claims.json").read_text(encoding="utf-8")).get("run_order")
     if not isinstance(order, list) or not all(isinstance(rid, str) for rid in order):
@@ -609,7 +648,11 @@ def v_b(c: Ctx) -> str:
 
 
 def v_b_sessions(c: Ctx) -> str:
-    s = c.runs["b-sessions-2026-10-15/sessions.json"]
+    return session_table(c, "b-sessions-2026-10-15/sessions.json", "b.sess")
+
+
+def session_table(c: Ctx, rel: str, prefix: str) -> str:
+    s = c.runs[rel]
     head = [c.t("Run", "次"), c.t("Create → active", "创建 → active"), c.t("First answer", "第一个回答"),
             c.t("Follow-up", "后续"), c.t("Stop → idle", "停止 → idle"), c.t("Answer after stop", "停止后回答"),
             c.t("Next answer", "再下一轮"), c.t("File kept", "文件保留"), c.t("Answers", "回答")]
@@ -623,8 +666,8 @@ def v_b_sessions(c: Ctx) -> str:
                      c.t("yes", "是") if r["marker_after_resume"]["matches"] is True else c.t("no", "否"), answers])
     m = c.m
     rows.append([c.t("**median**", "**中位数**")] + [f"**{num(m[k]['median'])}**" for k in
-                 ("b.sess.create", "b.sess.first", "b.sess.warm", "b.sess.stop", "b.sess.resume",
-                  "b.sess.warm_after_resume")] + ["", ""])
+                 (f"{prefix}.create", f"{prefix}.first", f"{prefix}.warm", f"{prefix}.stop", f"{prefix}.resume",
+                  f"{prefix}.warm_after_resume")] + ["", ""])
     codes: dict[str, int] = {}
     for e in s["http_log"]:
         codes[str(e["status"])] = codes.get(str(e["status"]), 0) + 1
@@ -1387,6 +1430,283 @@ def v_e_ci_idle(c: Ctx) -> str:
     return table(head, rows, ["---:", "---:", "---:", "---:"]) + tail
 
 
+# --- 2026-10-18 supplementary runs ---------------------------------------------------------------
+
+C18 = "c-aks-agent-sandbox-2026-10-18/perf.json"
+B_IDLE = ("b-sessions-2026-10-18/idle.json", "b-sessions-2026-10-18/idle-control.json")
+
+
+def span(values: list) -> str:
+    return f"{num(min(values))}–{num(max(values))}"
+
+
+def state_counts(c: Ctx, states: list[str]) -> str:
+    counts = Counter(states)
+    return c.t(", ", "、").join(f"`{s}` {k}/{len(states)}" for s, k in sorted(counts.items()))
+
+
+def idle_minutes(m: dict, key: str) -> int:
+    return round(m[f"{key}.waited"]["median"] / 60)
+
+
+def c_capacity(c: Ctx) -> str:
+    m, r = c.m, c.runs[C18]
+    start = {n["name"] for n in r["kata_nodes_at_start"]}
+    lv8 = next(lv for lv in r["scale"] if lv["sessions_at_once"] == 8)
+    first = sum(s["server"]["node"] in start for s in lv8["sessions"])
+    later = len(lv8["sessions"]) - first
+    sku = r["kata_nodes_at_start"][0]["vm_size"]
+    return c.t(f"your Kata node pool; 2026-10-18 on `{sku}` nodes: 4 at once {m['c.c4']['answered']}/{m['c.c4']['n']}, "
+               f"8 at once {m['c.c8']['answered']}/{m['c.c8']['n']}: {first} on the node that was there, {later} on a "
+               "second node the cluster autoscaler added",
+               f"你的 Kata 节点池；2026-10-18 在 `{sku}` 节点上：4 并发 {m['c.c4']['answered']}/{m['c.c4']['n']}，"
+               f"8 并发 {m['c.c8']['answered']}/{m['c.c8']['n']}：{first} 个在原有节点上，{later} 个在集群自动扩缩容新加的"
+               "第二个节点上")
+
+
+def runs_20261018(c: Ctx) -> list[list[str]]:
+    m = c.m
+    a_create = m["a.c4"]["create_s"] + m["a.c8"]["create_s"]
+    mins, mins5 = idle_minutes(m, "b.idle"), idle_minutes(m, "b.idle5")
+    k = m["b.idle.state_kept"]
+    dk = m["d.sess.state_kept"]
+    return [
+        ["`a-2026-10-18-scale`", "A", c.t("4 and 8 agent sandboxes at once", "同时创建 4 个和 8 个 agent 沙箱"),
+         c.t(f"4 at once {m['a.c4']['answered']}/{m['a.c4']['n']}, 8 at once {m['a.c8']['answered']}/{m['a.c8']['n']} "
+             f"answered; create → Running {span(a_create)} s; none left",
+             f"4 并发 {m['a.c4']['answered']}/{m['a.c4']['n']}、8 并发 {m['a.c8']['answered']}/{m['a.c8']['n']} 回答；"
+             f"创建 → Running {span(a_create)} s；无遗留")],
+        ["`b-2026-10-18-perf`", "B", c.t("D's protocol through the gateway: cold, warm, 4 and 8 at once",
+                                         "经网关跑 D 口径：冷启动、后续、4 和 8 并发"),
+         c.t(f"cold {num(m['b.d.cold']['median'])} s, warm {num(m['b.d.warm']['median'])} s (medians); 4 at once "
+             f"{m['b.d.c4']['answered']}/{m['b.d.c4']['n']}, 8 at once {m['b.d.c8']['answered']}/{m['b.d.c8']['n']} answered",
+             f"冷启动 {num(m['b.d.cold']['median'])} s、后续 {num(m['b.d.warm']['median'])} s（中位数）；4 并发 "
+             f"{m['b.d.c4']['answered']}/{m['b.d.c4']['n']}、8 并发 {m['b.d.c8']['answered']}/{m['b.d.c8']['n']} 回答")],
+        ["`b-2026-10-18-idle`", "B", c.t(f"next turn after {mins} min without requests, and after {mins5} min; 3 runs each",
+                                         f"{mins} 分钟没有请求后的下一轮，以及 {mins5} 分钟后的对照；各跑 3 次"),
+         c.t(f"status after {mins} min {state_counts(c, m['b.idle.state']['states'])}; next turn "
+             f"{num(m['b.idle.next']['median'])} s against {num(m['b.idle.warm']['median'])} s for the follow-up before "
+             f"the wait, {num(m['b.idle5.next']['median'])} s after {mins5} min (medians); file kept {k['files']}/{k['n']}",
+             f"{mins} 分钟后状态 {state_counts(c, m['b.idle.state']['states'])}；下一轮 "
+             f"{num(m['b.idle.next']['median'])} s，等待前的后续 {num(m['b.idle.warm']['median'])} s，"
+             f"{mins5} 分钟后 {num(m['b.idle5.next']['median'])} s（中位数）；文件保留 {k['files']}/{k['n']}")],
+        ["`c-2026-10-18-perf`", "C", c.t("cold without and with the Blob PVC, pod loss, suspend/resume, 4 and 8 at once",
+                                         "不挂卷和挂 Blob PVC 的冷启动、pod 丢失、挂起/恢复、4 和 8 并发"),
+         c.t(f"cold {num(m['c.n.cold']['median'])} s without the volume, {num(m['c.p.cold']['median'])} s with the PVC; "
+             f"pod lost → Ready {num(m['c.p.pod_lost']['median'])} s; resume → answer "
+             f"{num(m['c.p.resume_answer']['median'])} s (medians); 4 at once {m['c.c4']['answered']}/{m['c.c4']['n']}, "
+             f"8 at once {m['c.c8']['answered']}/{m['c.c8']['n']} answered",
+             f"冷启动不挂卷 {num(m['c.n.cold']['median'])} s、挂 PVC {num(m['c.p.cold']['median'])} s；pod 丢失 → Ready "
+             f"{num(m['c.p.pod_lost']['median'])} s；恢复到回答 {num(m['c.p.resume_answer']['median'])} s（中位数）；"
+             f"4 并发 {m['c.c4']['answered']}/{m['c.c4']['n']}、8 并发 {m['c.c8']['answered']}/{m['c.c8']['n']} 回答")],
+        ["`d-2026-10-18-sessions`", "D", c.t("explicit session lifecycle, 3 runs", "显式会话生命周期，跑 3 次"),
+         c.t(f"create → active {num(m['d.sess.create']['median'])} s, first answer {num(m['d.sess.first']['median'])} s, "
+             f"stop → idle {num(m['d.sess.stop']['median'])} s, resume → answer {num(m['d.sess.resume']['median'])} s "
+             f"(medians); file kept {dk['files']}/{dk['n']}; a new session pod after each stop",
+             f"创建 → active {num(m['d.sess.create']['median'])} s、第一个回答 {num(m['d.sess.first']['median'])} s、"
+             f"停止 → idle {num(m['d.sess.stop']['median'])} s、恢复到回答 {num(m['d.sess.resume']['median'])} s"
+             f"（中位数）；文件保留 {dk['files']}/{dk['n']}；每次停止后换一个新的会话 pod")],
+    ]
+
+
+def v_a_scale(c: Ctx) -> str:
+    a = c.runs["a-aca-2026-10-18/scale.json"]
+    head = [c.t("At once", "并发"), c.t("Answered", "回答"), c.t("Create → Running, s", "创建 → Running，s"),
+            c.t("Read turn inside the sandbox, s", "沙箱内的读取轮次，s"), c.t("All sessions, s", "全部会话，s")]
+    rows = []
+    for lv in a["levels"]:
+        r = c.m[f"a.c{lv['sessions_at_once']}"]
+        rows.append([str(r["n"]), f"{r['answered']}/{r['n']}", span(r["create_s"]), span(r["read_s"]), num(r["wall_s"])])
+    vmm = ", ".join(f"`{v}`" for v in c.m["a.c8"]["vmm"])
+    tail = c.t(f"\nEvery sandbox's second answer was its own `SCALE-<k>`; `vmm_type` {vmm} for all; every sandbox was "
+               "deleted and none was left. All sessions: from the first create call until the last sandbox was "
+               "deleted.\n",
+               f"\n每个沙箱的第二个回答都是它自己的 `SCALE-<k>`；`vmm_type` 都是 {vmm}；所有沙箱都已删除，没有遗留。"
+               "全部会话：从第一个创建调用到最后一个沙箱删除。\n")
+    return table(head, rows, ["---:", "---", "---:", "---:", "---:"]) + tail
+
+
+def v_b_perf_input(c: Ctx) -> str:
+    b = c.runs["b-hosted-agent-2026-10-18/perf.json"]
+    i, ag = b["inputs"], b["agent"]
+    lines = [c.t(f"Request: {b['request']}; {b['token']}.",
+                 f"请求：{b['request']}；认证：{b['token']}。"),
+             c.t(f"Agent: `{ag['name']}` version {ag['version']} ({ag['cpu']} vCPU, {ag['memory']}, "
+                 f"`MODEL_ROUTING={ag['model_routing']}`, `{ag['model']}`); {ag['version_note']}.",
+                 f"Agent：`{ag['name']}` 版本 {ag['version']}（{ag['cpu']} vCPU、{ag['memory']}、"
+                 f"`MODEL_ROUTING={ag['model_routing']}`、`{ag['model']}`）；{ag['version_note']}。"),
+             c.t(f"New sessions: \"{i['cold']}\" (n = 1–5)", f"新会话：\"{i['cold']}\"（n = 1–5）"),
+             c.t(f"One session: \"{i['warm_first']}\", then \"{i['warm_followup_1']}\", then \"{i['warm_followup_n']}\" "
+                 "(n = 1, 2)",
+                 f"同一会话：\"{i['warm_first']}\"，然后 \"{i['warm_followup_1']}\"，再 \"{i['warm_followup_n']}\"（n = 1、2）"),
+             c.t(f"At once, per session: \"{i['scale_turn1']}\", then \"{i['scale_turn2']}\" (4, then 8 sessions)",
+                 f"并发时每个会话：\"{i['scale_turn1']}\"，然后 \"{i['scale_turn2']}\"（先 4 个，再 8 个会话）"),
+             c.t(f"Client: {b['client']}.", f"客户端：{b['client']}。")]
+    return quote(lines)
+
+
+def v_b_perf(c: Ctx) -> str:
+    b = c.runs["b-hosted-agent-2026-10-18/perf.json"]
+    head1 = [c.t("Start (UTC)", "开始（UTC）"), c.t("Answer", "回答"), c.t("New session → answer, s", "新会话 → 回答，s"),
+             c.t("First byte, s", "首字节，s")]
+    rows1 = [[t["started_utc"][:8], t["answer"], num(t["wall_s"]), num(t["first_byte_s"])] for t in b["cold_turns"]]
+    head2 = [c.t("Turn", "轮次"), c.t("Answer", "回答"), c.t("Client wall, s", "客户端耗时，s")]
+    rows2 = [[c.t("1 (new session)", "1（新会话）") if k == 0 else str(k + 1), t["answer"], num(t["wall_s"])]
+             for k, t in enumerate(b["warm_turns"])]
+    head3 = [c.t("At once", "并发"), c.t("Answered", "回答"), c.t("Read back its word", "读回自己的词"),
+             c.t("Write turn, s", "写入轮次，s")]
+    rows3 = []
+    for lv in b["scalability"]:
+        r = c.m[f"b.d.c{lv['concurrency']}"]
+        rows3.append([str(r["n"]), f"{r['answered']}/{r['n']}", f"{r['remembered']}/{r['n']}", span(r["turn1_s"])])
+    return (c.t("New sessions:\n\n", "新会话：\n\n") + table(head1, rows1, ["---", "---", "---:", "---:"])
+            + c.t(f"\n{c.med('b.d.cold')}.\n\nFollow-ups in one session:\n\n",
+                  f"\n{c.med('b.d.cold')}。\n\n同一会话的后续回答：\n\n")
+            + table(head2, rows2, ["---", "---", "---:"])
+            + c.t(f"\nFollow-ups 2–4: {c.med('b.d.warm')}.\n\nAt once:\n\n", f"\n后续第 2–4 轮：{c.med('b.d.warm')}。\n\n并发：\n\n")
+            + table(head3, rows3, ["---:", "---", "---", "---:"])
+            + c.t("\nEvery request returned HTTP 200; the tool sends each request once.\n",
+                  "\n每个请求都返回 HTTP 200；工具对每个请求只发一次。\n"))
+
+
+def v_b_idle(c: Ctx) -> str:
+    m = c.m
+    head = [c.t("Wait, s", "等待，s"), c.t("Run", "次"), c.t("Status after the wait", "等待后的状态"),
+            c.t("Follow-up before the wait", "等待前的后续"), c.t("Next turn", "下一轮"),
+            c.t("Service time of that turn", "该轮服务端耗时"), c.t("Turn after that", "再下一轮"),
+            c.t("File kept", "文件保留"), c.t("Answers", "回答")]
+    rows = []
+    for rel, key in zip(B_IDLE, ("b.idle", "b.idle5")):
+        for r in c.runs[rel]["runs"]:
+            answers = " / ".join(str(r[x]["response"]) for x in ("first", "warm", "resume", "warm_after_resume"))
+            rows.append([num(r["idle"]["waited_s"]), str(r["run"]), f"`{r['idle']['state_before_resume']}`",
+                         num(r["warm"]["total_s"]), num(r["resume"]["total_s"]), num(r["resume"]["server_s"]),
+                         num(r["warm_after_resume"]["total_s"]),
+                         c.t("yes", "是") if r["marker_after_resume"]["matches"] is True else c.t("no", "否"), answers])
+        rows.append([f"**{num(m[key + '.waited']['median'])}**", c.t("**median**", "**中位数**"), ""]
+                    + [f"**{num(m[f'{key}.{x}']['median'])}**" for x in ("warm", "next", "next_server", "after")]
+                    + ["", ""])
+    return c.t("Seconds, client wall time; the service time is the response's `completed_at` minus `created_at` (whole "
+               "seconds); the last column is the agent's replies in order.\n\n",
+               "单位为秒，客户端计时；服务端耗时是响应的 `completed_at` 减 `created_at`（整秒）；最后一列是 agent 依次给出的回答。\n\n") \
+        + table(head, rows, ["---:", "---", "---", "---:", "---:", "---:", "---:", "---", "---"])
+
+
+def v_c18_input(c: Ctx) -> str:
+    r = c.runs[C18]
+    cl, i, res = r["cluster"], r["inputs"], r["resources"]
+    lines = [c.t(f"Cluster: {cl['note']}; Kubernetes {cl['kubernetes']}, {cl['tier']} tier; system pool "
+                 f"{cl['system_pool']}; Kata pool {cl['kata_pool']}; agent-sandbox {cl['agent_sandbox']}.",
+                 f"集群：{cl['note']}；Kubernetes {cl['kubernetes']}，{cl['tier']} 层级；系统节点池 {cl['system_pool']}；"
+                 f"Kata 节点池 {cl['kata_pool']}；agent-sandbox {cl['agent_sandbox']}。"),
+             c.t(f"Each test Sandbox copies the spec of the workshop's `{r['template']}` Sandbox in namespace "
+                 f"`{r['namespace']}` under a new name and the label `app=agent-host-measure`: image `{r['image']}`, "
+                 f"runtime class `{r['runtime_class']}`, requests {res['requests']['cpu']} CPU and "
+                 f"{res['requests']['memory']}, limits {res['limits']['cpu']} CPU and {res['limits']['memory']}. "
+                 "`AGENT_ID` comes from the pod name, so each copy keeps its conversation in its own state file.",
+                 f"每个测试 Sandbox 复制命名空间 `{r['namespace']}` 里 workshop 的 `{r['template']}` Sandbox 的 spec，"
+                 f"换一个新名字并加标签 `app=agent-host-measure`：镜像 `{r['image']}`，运行时类 `{r['runtime_class']}`，"
+                 f"requests {res['requests']['cpu']} CPU、{res['requests']['memory']}，limits {res['limits']['cpu']} CPU、"
+                 f"{res['limits']['memory']}。`AGENT_ID` 取自 pod 名，所以每个副本把对话存在自己的状态文件里。"),
+             c.t(f"Request: {i['request']}.", f"请求：{i['request']}。"),
+             c.t(f"First answer: \"{i['first']}\"", f"第一个问题：\"{i['first']}\""),
+             c.t(f"Every later turn: \"{i['follow_up']}\"; with the PVC once more after the pod was deleted and once "
+                 "after suspend/resume",
+                 f"之后每一轮：\"{i['follow_up']}\"；挂 PVC 时在删除 pod 后、挂起/恢复后各再问一次"),
+             c.t(f"At once, per Sandbox without the volume: \"{i['scale_write']}\", then \"{i['scale_read']}\" "
+                 "(4, then 8 Sandboxes)",
+                 f"并发时每个 Sandbox（不挂卷）：\"{i['scale_write']}\"，然后 \"{i['scale_read']}\"（先 4 个，再 8 个 Sandbox）"),
+             c.t(f"Client: {r['client']}.", f"客户端：{r['client']}。")]
+    return quote(lines)
+
+
+def v_c18_runs(c: Ctx) -> str:
+    r = c.runs[C18]
+    head = ["Sandbox", c.t("Volume", "卷"), c.t("`kubectl apply` → Ready, s", "`kubectl apply` → Ready，s"),
+            c.t("First answer, s", "第一个回答，s"), c.t("Cold total, s", "冷启动合计，s"), c.t("Follow-up, s", "后续，s"),
+            c.t("Conversation length", "对话长度")]
+    rows, extra = [], []
+    for x in r["cold"] + r["pvc"]:
+        keys = [k for k in ("first", "follow_up", "after_pod_delete", "after_resume") if k in x]
+        extra += [x[k]["exec_wall_s"] - x[k]["guest_s"] for k in keys]
+        rows.append([x["sandbox"], "Blob PVC" if x["pvc"] else c.t("none", "无"), num(x["apply_to_ready_s"]),
+                     num(x["first"]["guest_s"]), num(x["cold_total_s"]), num(x["follow_up"]["guest_s"]),
+                     ", ".join(str(x[k]["history_length"]) for k in keys)])
+    tail = c.t(f"\nWithout the volume: apply → Ready {c.med('c.n.apply_ready')}, first answer {c.med('c.n.first')}, "
+               f"cold total {c.med('c.n.cold')}. With the Blob PVC: apply → Ready {c.med('c.p.apply_ready')}, first "
+               f"answer {c.med('c.p.first')}, cold total {c.med('c.p.cold')}. Follow-ups with the PVC: "
+               f"{c.vals('c.p.warm')}; the record does not show where "
+               "the slow one spent its time. Answers are timed inside the pod; the `kubectl exec` round trip around each "
+               f"added {span(extra)} s on the client and is excluded.\n",
+               f"\n不挂卷：apply → Ready {c.med('c.n.apply_ready')}，第一个回答 {c.med('c.n.first')}，冷启动合计 "
+               f"{c.med('c.n.cold')}。挂 Blob PVC：apply → Ready {c.med('c.p.apply_ready')}，第一个回答 "
+               f"{c.med('c.p.first')}，冷启动合计 {c.med('c.p.cold')}。"
+               f"挂 PVC 时的后续回答：{c.vals('c.p.warm')}；记录里看不出慢的那一次时间花在哪里。"
+               f"回答在 pod 内计时；外层的 `kubectl exec` 往返每次在客户端多花 {span(extra)} s，不计入。\n")
+    return table(head, rows, ["---", "---", "---:", "---:", "---:", "---:", "---"]) + tail
+
+
+def v_c18_pvc(c: Ctx) -> str:
+    r, m = c.runs[C18], c.m
+    head = ["Sandbox", c.t("Pod deleted → Ready, s", "删除 pod → Ready，s"), c.t("Answer, s", "回答，s"),
+            c.t("Suspended → pod gone, s", "Suspended → pod 消失，s"), c.t("Running → Ready, s", "Running → Ready，s"),
+            c.t("Answer, s", "回答，s"), c.t("Resume → answer, s", "恢复 → 回答，s")]
+    rows = [[x["sandbox"], num(x["pod_delete_to_ready_s"]), num(x["after_pod_delete"]["guest_s"]),
+             num(x["suspend_to_pod_gone_s"]), num(x["resume_to_ready_s"]), num(x["after_resume"]["guest_s"]),
+             num(x["resume_to_answer_s"])] for x in r["pvc"]]
+    rows.append([c.t("**median**", "**中位数**"), f"**{num(m['c.p.pod_lost']['median'])}**", "",
+                 f"**{num(m['c.p.suspend']['median'])}**", f"**{num(m['c.p.resume_ready']['median'])}**", "",
+                 f"**{num(m['c.p.resume_answer']['median'])}**"])
+    reasons = sorted({x["suspended_condition"]["reason"] for x in r["pvc"]})
+    tail = c.t(f"\nWhile suspended, the Sandbox's Ready condition read `False` ({', '.join(f'`{x}`' for x in reasons)}) "
+               "in every run. The conversation length kept growing after the pod was deleted and after suspend/resume "
+               "(last column of the table above), so the state came back from the Blob PVC each time. Resume → answer "
+               "is the Running patch until Ready plus the answer inside the pod.\n",
+               f"\n挂起期间，每次 Sandbox 的 Ready 条件都是 `False`（{'、'.join(f'`{x}`' for x in reasons)}）。删除 pod 后、"
+               "挂起/恢复后对话长度都接着增长（见上表最后一列），说明状态每次都从 Blob PVC 恢复。恢复 → 回答是 Running "
+               "patch 到 Ready 再加 pod 内的回答。\n")
+    return table(head, rows, ["---", "---:", "---:", "---:", "---:", "---:", "---:"]) + tail
+
+
+def v_c18_scale(c: Ctx) -> str:
+    r = c.runs[C18]
+    start = {n["name"] for n in r["kata_nodes_at_start"]}
+    head = [c.t("At once", "并发"), c.t("Answered", "回答"), c.t("Apply → Ready, s", "Apply → Ready，s"),
+            c.t("Sandboxes per Kata node", "每个 Kata 节点上的 Sandbox"), c.t("All Sandboxes, s", "全部 Sandbox，s")]
+    rows = []
+    for lv in r["scale"]:
+        s = c.m[f"c.c{lv['sessions_at_once']}"]
+        per = sorted(Counter(x["server"]["node"] for x in lv["sessions"]).items())
+        rows.append([str(s["n"]), f"{s['answered']}/{s['n']}", span(s["ready_s"]),
+                     c.t(", ".join(f"{k}: {v}" for k, v in per), "、".join(f"{k}：{v}" for k, v in per)), num(s["wall_s"])])
+    lv8 = next(lv for lv in r["scale"] if lv["sessions_at_once"] == 8)
+    late = [x["apply_to_ready_s"] for x in lv8["sessions"] if x["server"]["node"] not in start]
+    on_first = len(lv8["sessions"]) - len(late)
+    tail = c.t(f"\nThe run started with {len(start)} Kata node, which also ran the workshop's own Sandbox. With 8 at once, "
+               f"{on_first} test Sandboxes fit there (each requests {r['resources']['requests']['cpu']} CPU); the other "
+               f"{len(late)} ran on a node the cluster autoscaler added during the run and were Ready after {span(late)} s. "
+               f"Kata nodes at the end: {len(r['kata_nodes_at_end'])}. Every Sandbox answered with its own `SCALE-<k>` "
+               "and was deleted.\n",
+               f"\n开始时只有 {len(start)} 个 Kata 节点，workshop 自己的 Sandbox 也在上面。8 个同时开时，{on_first} 个测试 Sandbox "
+               f"放进了这个节点（每个 requests {r['resources']['requests']['cpu']} CPU）；另外 {len(late)} 个跑在集群自动扩缩容"
+               f"在测试中新加的节点上，{span(late)} s 后才就绪。结束时 Kata 节点数：{len(r['kata_nodes_at_end'])}。每个 Sandbox "
+               "都回答了自己的 `SCALE-<k>`，并已删除。\n")
+    return table(head, rows, ["---:", "---", "---:", "---", "---:"]) + tail
+
+
+def v_d_sessions(c: Ctx) -> str:
+    p = c.m["d.sess.pods"]
+    tail = c.t(f"\nSession pods during the three runs: {p['n']} new pods, {p['per_session']} per session, each Running "
+               f"{span(p['running_after_s'])} s after it appeared (pod age at the change). Both pods of a session ended "
+               "(Terminating, then Completed); their ages fit `:stop` ending the first and the delete ending the second. "
+               "`kubectl get pods -w` records order and ages, not timestamps.\n",
+               f"\n三次实测中的会话 pod：新出现 {p['n']} 个，每个会话 {p['per_session']} 个，每个出现后 "
+               f"{span(p['running_after_s'])} s 进入 Running（变化时的 pod 年龄）。同一会话的两个 pod 都结束了"
+               "（Terminating，然后 Completed）；年龄与 `:stop` 结束第一个、删除会话结束第二个相符。"
+               "`kubectl get pods -w` 只记录顺序和年龄，没有时间戳。\n")
+    return session_table(c, "d-byoaks-2026-10-18/sessions.json", "d.sess") + tail
+
+
 BLOCKS = {
     "comparison": b_comparison, "runs": b_runs,
     "a-agent-input": v_a_agent_input, "a-agent": v_a_agent, "a-attr": v_a_attr, "a-late": v_a_late,
@@ -1400,6 +1720,9 @@ BLOCKS = {
     "e-multi-idle": v_e_multi_idle, "e-multi-hostloss": v_e_multi_hostloss,
     "e-ci-input": v_e_ci_input, "e-ci-agent": v_e_ci_agent, "e-ci-build": v_e_ci_build, "e-ci-cold": v_e_ci_cold,
     "e-ci-warm": v_e_ci_warm, "e-ci-scale": v_e_ci_scale, "e-ci-idle": v_e_ci_idle,
+    "a-scale": v_a_scale, "b-perf-input": v_b_perf_input, "b-perf": v_b_perf, "b-idle": v_b_idle,
+    "c18-input": v_c18_input, "c18-runs": v_c18_runs, "c18-pvc": v_c18_pvc, "c18-scale": v_c18_scale,
+    "d-sessions": v_d_sessions,
 }
 
 

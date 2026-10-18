@@ -4,6 +4,8 @@ r"""Measure the explicit session lifecycle of a Foundry hosted agent (Path B).
 One run: create a session, write a marker file into it, ask a first question and a follow-up,
 stop the session, send the next turn with the same agent_session_id (the platform provisions
 new compute and restores $HOME), read the marker back, ask once more, then delete the session.
+With --resume-after idle the explicit stop is replaced by --idle-wait seconds without any request to
+the session (the platform's idle timeout, 15 min by default), one status read, then the same resume turn.
 
     python tools/measure_sessions.py \
         --project-endpoint https://<account>.services.ai.azure.com/api/projects/<project> \
@@ -56,7 +58,9 @@ CLOCKS = {
     "<turn>_success_s": "the successful HTTP attempt alone",
     "<turn>_server_s": "response completed_at minus created_at as recorded by the service (whole seconds)",
     "stop_to_idle_s": "POST .../sessions/{id}:stop until GET .../sessions/{id} reads idle",
-    "resume": "the next /responses call on the stopped session; the platform provisions compute and restores $HOME",
+    "idle_wait": "--resume-after idle: no request to the session for the wait, then one GET .../sessions/{id}",
+    "resume": "the next /responses call on the stopped or idle session; the platform provisions compute and restores "
+              "$HOME",
     "marker": "file written with PUT .../files/content before stop and read with GET after resume",
 }
 
@@ -185,7 +189,12 @@ def say(run: int, step: str, rec: dict, extra: str = "") -> None:
           flush=True)
 
 
-def one_run(client: Client, agent: str, version: str, index: int) -> dict:
+def run_calls(r: dict) -> tuple[str, ...]:
+    return tuple(k for k in CALLS if k != "stop") if "idle" in r else CALLS
+
+
+def one_run(client: Client, agent: str, version: str, index: int, resume_after: str = "stop",
+            idle_wait: float = 0.0) -> dict:
     r: dict = {"run": index, "started_at": utc()}
     sid = None
     try:
@@ -210,10 +219,17 @@ def one_run(client: Client, agent: str, version: str, index: int) -> dict:
         say(index, "first", r["first"], f"server={r['first'].get('server_s')}s answer={r['first'].get('response')!r}")
         r["warm"] = turn(client, agent, sid, COUNT, r["first"].get("response_id"))
         say(index, "warm", r["warm"], f"server={r['warm'].get('server_s')}s answer={r['warm'].get('response')!r}")
-        rec, _ = client.call("stop_session", "POST", f"/agents/{agent}/endpoint/sessions/{sid}:stop", body={})
-        r["stop"] = {**rec, "wait_stopped": wait_status(client, agent, sid, {"idle", "stopped"})}
-        say(index, "stop", rec, f"state={r['stop']['wait_stopped']['state']} after "
-                                f"{r['stop']['wait_stopped']['seconds']}s")
+        if resume_after == "idle":
+            t_wait = time.perf_counter()
+            time.sleep(idle_wait)
+            state = wait_status(client, agent, sid, {"idle", "stopped"}, limit_s=0)["state"]
+            r["idle"] = {"waited_s": round(time.perf_counter() - t_wait, 3), "state_before_resume": state}
+            print(f"run {index} idle               waited={r['idle']['waited_s']}s state={state}", flush=True)
+        else:
+            rec, _ = client.call("stop_session", "POST", f"/agents/{agent}/endpoint/sessions/{sid}:stop", body={})
+            r["stop"] = {**rec, "wait_stopped": wait_status(client, agent, sid, {"idle", "stopped"})}
+            say(index, "stop", rec, f"state={r['stop']['wait_stopped']['state']} after "
+                                    f"{r['stop']['wait_stopped']['seconds']}s")
         r["resume"] = turn(client, agent, sid, COUNT, r["warm"].get("response_id"))
         say(index, "resume", r["resume"],
             f"server={r['resume'].get('server_s')}s answer={r['resume'].get('response')!r}")
@@ -279,13 +295,16 @@ def passed(record: dict) -> bool:
     return (bool(runs) and record["summary"]["runs_complete"]["count"] == len(runs)
             and all(r.get("deleted") is True and dig(r, "marker_after_resume", "matches") is True and count_grew(r)
                     for r in runs)
+            and all(dig(r, "idle", "state_before_resume") in ("idle", "stopped") for r in runs if "idle" in r)
             and c["list_status"] == 200 and c["extra_deleted"] == c["extra_sessions"])
 
 
 def summarize(runs: list[dict], log: list[dict]) -> dict:
     s: dict = {
-        "runs_complete": {"count": sum("error" not in r and all(ok(r, k) for k in CALLS) for r in runs),
+        "runs_complete": {"count": sum("error" not in r and all(ok(r, k) for k in run_calls(r)) for r in runs),
                           "n": len(runs)},
+        "idle_waited_s": stat([dig(r, "idle", "waited_s") for r in runs]),
+        "idle_state_before_resume": [dig(r, "idle", "state_before_resume") for r in runs if "idle" in r],
         "create_to_active_s": stat([dig(r, "create", "total_s") + (dig(r, "create", "wait_active", "seconds") or 0)
                                     for r in runs if ok(r, "create")]),
         "create_success_s": stat([dig(r, "create", "success_s") for r in runs]),
@@ -303,7 +322,7 @@ def summarize(runs: list[dict], log: list[dict]) -> dict:
         s[f"{t}_server_s"] = stat([dig(r, t, "server_s") for r in runs])
     by_status = Counter(str(e["status"]) for e in log)
     s["http_attempts"] = {"total": len(log), "by_status": dict(sorted(by_status.items())),
-                          "calls_retried": sum(len(dig(r, k, "attempts") or []) > 1 for r in runs for k in CALLS)}
+                          "calls_retried": sum(len(dig(r, k, "attempts") or []) > 1 for r in runs for k in run_calls(r))}
     return s
 
 
@@ -346,9 +365,15 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--agent", required=True, help="hosted agent name")
     p.add_argument("--version", required=True, help="concrete agent version to pin each session to")
     p.add_argument("--runs", type=int, default=3)
+    p.add_argument("--resume-after", choices=("stop", "idle"), default="stop",
+                   help="stop: explicit :stop before the resume turn; idle: no request for --idle-wait seconds")
+    p.add_argument("--idle-wait", type=float, default=17 * 60.0,
+                   help="seconds to leave the session untouched with --resume-after idle (default 17 min)")
     p.add_argument("--attempts", type=int, default=4, help="maximum HTTP attempts per call")
     p.add_argument("--timeout", type=float, default=180.0, help="seconds per HTTP attempt")
     p.add_argument("--run-id", default="b-sessions")
+    p.add_argument("--path", default="B", choices=("B", "D"),
+                   help="B (Foundry-managed compute) or D (the same sessions API on your AKS, BYO-AKS)")
     p.add_argument("--region", default="")
     p.add_argument("--client-note", default="", help="where the client ran and which hops it crossed")
     p.add_argument("--out", required=True, help="private raw JSON (session IDs, endpoint)")
@@ -369,12 +394,16 @@ def main(argv: list[str] | None = None) -> int:
     print(f"agent {a.agent} v{a.version}: http={rec['status']} kind={agent['kind']} cpu={agent['cpu']} "
           f"memory={agent['memory']} routing={agent['model_routing']}", flush=True)
 
-    runs = [one_run(client, a.agent, a.version, i) for i in range(1, a.runs + 1)]
+    runs = [one_run(client, a.agent, a.version, i, a.resume_after, a.idle_wait) for i in range(1, a.runs + 1)]
     cleanup = sweep(client, a.agent, a.version, started_epoch, {r.get("session") for r in runs if r.get("deleted")})
     record = {
-        "run_id": a.run_id, "path": "B",
-        "what": "Foundry hosted agent: explicit session lifecycle (create, first answer, follow-up, stop, "
-                "resume on the next request, file kept, delete)",
+        "run_id": a.run_id, "path": a.path,
+        "what": ("Foundry hosted agent" if a.path == "B" else "BYO-AKS hosted agent on your AKS")
+                + (": explicit session lifecycle (create, first answer, follow-up, stop, resume on the next request, "
+           "file kept, delete)" if a.resume_after == "stop" else
+           f": session lifecycle with resume after the idle timeout (create, first answer, follow-up, "
+           f"{a.idle_wait:.0f} s without requests, resume on the next request, file kept, delete)"),
+        "resume_after": a.resume_after,
         "date_utc": started[:10], "started_at": started, "finished_at": utc(), "region": a.region,
         "client": a.client_note, "project_endpoint": a.project_endpoint,
         "docs": "https://learn.microsoft.com/azure/foundry/agents/how-to/manage-hosted-sessions",

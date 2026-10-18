@@ -20,18 +20,19 @@
 |---|---|---|---|
 | 冷启动，A（分段相加） | SDK create 调用 → Running | 加上第一个 `/reflect` 回答耗时 | create 在客户端计时；回答在沙箱内计时 |
 | 冷启动，B 和 D | 客户端 POST 一个新会话 | 读完整个响应体 | 客户端，经 Foundry 端点 |
-| 冷启动，C（分段相加） | `kubectl apply` → Sandbox Ready | 加上 LoadBalancer 的第一个回答耗时 | 客户端经自己的 LoadBalancer；模型推理仍经 APIM |
+| 冷启动，C（分段相加） | `kubectl apply` → Sandbox Ready | 加上第一个回答耗时：在 LoadBalancer 处（2026-09-27）或在 pod 内（2026-10-18） | 客户端；回答经自己的 LoadBalancer，或用 `kubectl exec` 在 pod 内；模型推理仍经 APIM |
 | 后续回答 | 下一轮请求发出 | 收到回答 | 同冷启动 |
 | 恢复，A（分段相加） | SDK resume 调用 → Running | 加上恢复后的第一个回答耗时 | resume 在客户端计时；回答在沙箱内计时 |
-| 恢复，C | patch `operatingMode: Running` | LoadBalancer 返回第一个回答 | 客户端 |
-| pod 丢失 | pod 被删除 | 替代 pod 变为 Ready（Kubernetes 时间戳） | 集群 |
-| B 会话接口：创建、停止 | `POST .../endpoint/sessions`、`POST .../sessions/{id}:stop` | 会话读到 `active`、`idle` | 客户端；含失败的尝试及其间隔 2 s |
+| 恢复，C | patch `operatingMode: Running` | LoadBalancer 返回第一个回答（2026-09-27）；Ready 加 pod 内计时的回答（2026-10-18，分段相加） | 客户端 |
+| pod 丢失 | pod 被删除 | 替代 pod 变为 Ready（Kubernetes 时间戳；C 的 2026-10-18 实测由客户端轮询） | 集群 |
+| 并发，A 和 C（2026-10-18） | 同时发出 N 个创建或 apply | 每个沙箱的第二个回答，在沙箱内计时；最后一个删除后该档结束 | 创建、apply 和删除在客户端；回答在沙箱内 |
+| B 和 D 会话接口：创建、停止 | `POST .../endpoint/sessions`、`POST .../sessions/{id}:stop` | 会话读到 `active`、`idle` | 客户端；含失败的尝试及其间隔 2 s |
 | 冷启动，E 的 A 口径（分段相加） | `Sandbox.create`（`code-interpreter-v1`；2026-10-17 之前为 `base`）→ 返回 | 加上第一轮 Prompt Agent：第一次 `POST /openai/v1/responses` 到最终回答，含每次工具往返 | 工具进程内；E 的实测在 E2B 宿主 VM 上 |
 | 冷启动，E 的 D 口径 | 创建对话 | 这一轮的最终回答，中间含 `Sandbox.create`（一次计时） | 同上 |
 | 恢复，E（分段相加） | `Sandbox.connect` → 返回 | 加上恢复后的第一轮 | 同上 |
 | 暂停，E | `beta_pause` | 返回 | 同上 |
 
-E 和 `b-2026-10-15-sessions` 的计时都用测量进程里的 `time.perf_counter()`；范围是最小值到最大值。A 和 E 在停止或暂停结束后等 5 s 再恢复，这段等待不计入任何计时。E 的并发表给的是沙箱创建加第 1 轮，这是 2026-10-14 驱动的计时口径。
+E、`b-2026-10-15-sessions` 和 2026-10-18 各次实测的计时都用测量进程里的 `time.perf_counter()`；范围是最小值到最大值。A、E 和 C 的 2026-10-18 实测在停止、暂停或挂起结束后等 5 s 再恢复，这段等待不计入任何计时。E 的并发表给的是沙箱创建加第 1 轮，这是 2026-10-14 驱动的计时口径。
 
 A 的回答在沙箱内计时，是因为 2026-09-27 那次从操作员地址访问不到端口（端口的 IP 规则看到的是不断变化的 Azure 出口地址）。所以四条路径的网络链路并不相同，同一行比较的是实现方式，而不是网络。
 
@@ -50,9 +51,9 @@ A 的冷启动为 `create_total_s + first.guest_s`，恢复到回答为 `resume_
 | `ask` | `sandbox.exec("python3 -c …")`，在沙箱内向 `http://127.0.0.1:8080/reflect` POST `{"query": …}` 并计时 |
 | `stop`、`resume`、`delete` | `sandbox.stop()` / `resume()` 后轮询；`delete_sandbox(id)` |
 
-[`tools/measure_aca.py`](tools/measure_aca.py) 复现 2026-10-09 的测法：`agent` 模式每次执行 create → 回答 → 回答 → stop → resume → 回答 → 回答 → delete，对话历史长度未持续增长时会失败；`create` 模式对每种配置（`builtin`、`image`、`vnet`、`port`、`vnetvolume`、`full`）测创建耗时，并记录恢复后的 guest uptime 是否大于停止前的值。uptime 本身不能证明进程内存的连续性；保留的 `process_survived` 字段只是这个观察的历史命名。
+[`tools/measure_aca.py`](tools/measure_aca.py) 复现 2026-10-09 的测法：`agent` 模式每次执行 create → 回答 → 回答 → stop → resume → 回答 → 回答 → delete，对话历史长度未持续增长时会失败；`create` 模式对每种配置（`builtin`、`image`、`vnet`、`port`、`vnetvolume`、`full`）测创建耗时，并记录恢复后的 guest uptime 是否大于停止前的值。uptime 本身不能证明进程内存的连续性；保留的 `process_survived` 字段只是这个观察的历史命名。`scale` 模式按 `--scale` 的每一档同时创建这么多完整规格的沙箱；每个沙箱问 D 和 E 的两个并发问题，第二个回答说出自己的词才算回答，进入下一档之前删除全部沙箱（`a-2026-10-18-scale`）。
 
-[`tools/measure_responses.py`](tools/measure_responses.py)（B 和 D）用 `https://ai.azure.com` 的 Azure CLI token 向 `AGENT_RESPONSES_URL` POST `{"input": …}`，后续轮次加上 `previous_response_id`。token 获取发生在请求计时之外，每个并发档位和恢复前都会刷新。带 `--observe` 时，仅接受唯一新增的 Ready Kata pod 作为候选；候选不唯一或读取失败都会失败，不能作为落地证据。观察时请使用没有其他新建会话的项目命名空间。`--recovery` 删除唯一新增的 Kata pod，等待删除完成后，沿用该会话的 response ID 追问。退出码 0 要求 cold、warm、并发和恢复中所有请求的检查都通过；跳过恢复、删除失败或遗忘状态会返回退出码 1。
+[`tools/measure_responses.py`](tools/measure_responses.py)（B 和 D）用 `https://ai.azure.com` 的 Azure CLI token 向 `AGENT_RESPONSES_URL` POST `{"input": …}`，后续轮次加上 `previous_response_id`。token 获取发生在请求计时之外，每个并发档位和恢复前都会刷新。带 `--observe` 时，仅接受唯一新增的 Ready Kata pod 作为候选；候选不唯一或读取失败都会失败，不能作为落地证据。观察时请使用没有其他新建会话的项目命名空间。`--recovery` 删除唯一新增的 Kata pod，等待删除完成后，沿用该会话的 response ID 追问。退出码 0 要求 cold、warm、并发和恢复中所有请求的检查都通过；跳过恢复、删除失败或遗忘状态会返回退出码 1。设置 `RESPONSES_AUTH_HEADER`（`Header-Name: value`，例如 API Management 密钥）时改发这个请求头而不是 token，`b-2026-10-18-perf` 就是这样；它的值不会打印或写入任何文件。
 
 [`tools/check_isolation.py`](tools/check_isolation.py)（C 和 D）读取 `kubectl get pods` 和 `kubectl get nodes`，要求 `runtimeClassName: kata-vm-isolation` 且 phase 为 Running；带 `--exec-uname` 时比较 pod 内的 `uname -r` 和所在节点的 `kernelVersion`。
 
@@ -62,13 +63,15 @@ A 的冷启动为 `create_total_s + first.guest_s`，恢复到回答为 `resume_
 
 [`tools/measure_code_interpreter.py`](tools/measure_code_interpreter.py)（E）用 `e2b-code-interpreter` 2.11.0 对 E2B 官方的 `code-interpreter-v1` 模板跑 `e-2026-10-15-latest` 的 11 个步骤，任何一步失败或留下沙箱都会失败。
 
-[`tools/measure_sessions.py`](tools/measure_sessions.py)（B）按 [Manage hosted agent sessions](https://learn.microsoft.com/azure/foundry/agents/how-to/manage-hosted-sessions) 执行显式会话生命周期：创建固定到某个 agent 版本的会话，向会话写入一个文件，回答两轮，`:stop` 并等到 `idle`，在同一个 `agent_session_id` 上再回答，读回文件，再回答一轮，删除会话。认证用 `https://ai.azure.com` 的 Azure CLI token 或 `SESSIONS_AUTH_HEADER` 里的请求头；每次 HTTP 尝试（含重试）都会记录；输出一份私有记录和一份去掉会话 ID 与端点的公开记录。退出码 0 要求每次都跑完、文件原样读回、问题计数持续增长，并且它创建的会话全部删除；2026-10-15 的实测四项都满足。
+[`tools/measure_sessions.py`](tools/measure_sessions.py)（B 和 D）按 [Manage hosted agent sessions](https://learn.microsoft.com/azure/foundry/agents/how-to/manage-hosted-sessions) 执行显式会话生命周期：创建固定到某个 agent 版本的会话，向会话写入一个文件，回答两轮，`:stop` 并等到 `idle`，在同一个 `agent_session_id` 上再回答，读回文件，再回答一轮，删除会话。认证用 `https://ai.azure.com` 的 Azure CLI token 或 `SESSIONS_AUTH_HEADER` 里的请求头；每次 HTTP 尝试（含重试）都会记录；输出一份私有记录和一份去掉会话 ID 与端点的公开记录。退出码 0 要求每次都跑完、文件原样读回、问题计数持续增长，并且它创建的会话全部删除；2026-10-15 的实测四项都满足。`--resume-after idle` 把停止换成 `--idle-wait` 秒内不向会话发任何请求、再读一次状态，此时退出码 0 还要求该状态为 `idle` 或 `stopped`（`b-2026-10-18-idle`）；`--path D` 把一次实测标为 BYO-AKS（`d-2026-10-18-sessions`）。
+
+[`tools/measure_c.py`](tools/measure_c.py)（C）复制 workshop 的 `agent-host` Sandbox 的 spec，换新名字并加标签 `app=agent-host-measure`，所以不碰 workshop 自己的 Sandbox 和 LoadBalancer。它计时 `kubectl apply` 到 Sandbox 及其 pod 都 Ready，用 `kubectl exec` 在 pod 内提问（与 A 在沙箱内的请求相同）；挂 Blob PVC 时还会删除 pod 并跑一次挂起/恢复；`--scale` 同时 apply N 个不挂卷的 Sandbox。退出码 0 要求每次的对话都持续增长、每个并发 Sandbox 都说出自己的词，并且测试 Sandbox 全部删除（`c-2026-10-18-perf`）。
 
 workshop 的脚本（`module-01/setup.sh`、`module-03/prepare-agent-sandbox.sh`、`module-04/sandbox-deploy.sh`）按 `905f2c2` 原样使用，本仓库不复制它们。
 
 ## 实测记录
 
-所有实测使用的 Azure 资源都在 East US 2。客户端是一台 Windows 工作站，只有 `b-2026-10-15-sessions`（Japan East 的一台 Windows VM，从 WSL Ubuntu 发起）和 E（测量工具直接在 E2B 宿主 VM 上运行，2026-10-15 是在 host a 上，2026-10-17 是在 host c 上）例外。A/B/C 记录明确写了 Azure CLI 2.88.0 和 azd 1.34.1；A 的 SDK 记录还写了 Python 3.13。原始控制台输出和 ID 留在作者的私有目录里；[`tools/export_evidence.py`](tools/export_evidence.py) 把它们投影到 [`evidence/runs/`](evidence/runs/)，记录了每个私有源文件的 SHA-256，并把节点、pod 和命名空间名替换成中性标签。
+所有实测使用的 Azure 资源都在 East US 2。客户端是一台 Windows 工作站，只有 `b-2026-10-15-sessions` 和 2026-10-18 的各次实测（Japan East 的一台 Windows VM，从 WSL Ubuntu 发起）以及 E（测量工具直接在 E2B 宿主 VM 上运行，2026-10-15 是在 host a 上，2026-10-17 是在 host c 上）例外。A/B/C 记录明确写了 Azure CLI 2.88.0 和 azd 1.34.1；A 的 SDK 记录还写了 Python 3.13。原始控制台输出和 ID 留在作者的私有目录里；[`tools/export_evidence.py`](tools/export_evidence.py) 把它们投影到 [`evidence/runs/`](evidence/runs/)，记录了每个私有源文件的 SHA-256，并把节点、pod 和命名空间名替换成中性标签。2026-10-18 的记录由一个私有脚本按同样的方式投影，每份记录都列出了它的 SHA-256。
 
 实测按 A→B→C→D→E 分组，同一路径内按日期从早到晚排列，与 README 表格的顺序一致。
 
@@ -195,6 +198,30 @@ workshop 的脚本（`module-01/setup.sh`、`module-03/prepare-agent-sandbox.sh`
 
 **边界。** 只有两次。只在第一个回答不需要已保存状态时有用：挂载完成之前，agent 的状态目录是空的。
 
+### a-2026-10-18-scale：同时创建 4 个和 8 个 agent 沙箱
+
+**问题。** 用完整规格同时创建 4 个、再同时创建 8 个 agent 沙箱，是否都能启动并回答？这种负载下创建要多久？
+
+**输入。** [`tools/measure_aca.py`](tools/measure_aca.py) `scale --scale 4,8`，使用 `a-2026-10-09-agent` 的 sandbox group 和磁盘镜像（[`evidence/runs/a-aca-2026-10-18/scale.json`](evidence/runs/a-aca-2026-10-18/scale.json)）。每个沙箱先问 "Remember SCALE-<k>. Reply only OK."，再问 "What did I ask you to remember? Word only."（D 和 E 的并发问题），然后删除。
+
+**变量与固定项。** 只改同时创建的数量：先 4 个，再 8 个，间隔 20 s。规格（自定义镜像、VNet、私有 Blob 卷、端口；1 vCPU、2 GiB）与 `a-2026-10-09-agent` 相同；客户端是 Japan East 的一台 Windows VM（WSL Ubuntu），回答在每个沙箱内计时。
+
+**结果。**
+
+<!-- BEGIN GENERATED: a-scale -->
+| 并发 | 回答 | 创建 → Running，s | 沙箱内的读取轮次，s | 全部会话，s |
+|---:|---|---:|---:|---:|
+| 4 | 4/4 | 15.66–24.55 | 0.93–1.11 | 32.9 |
+| 8 | 8/8 | 15.49–24.25 | 1.01–1.74 | 33.91 |
+
+每个沙箱的第二个回答都是它自己的 `SCALE-<k>`；`vmm_type` 都是 `cloudhypervisor`；所有沙箱都已删除，没有遗留。全部会话：从第一个创建调用到最后一个沙箱删除。
+<!-- END GENERATED: a-scale -->
+
+**边界。**
+- 每档只跑一次，只有一个客户端。8 个沙箱共 8 个活跃核，远低于默认配额 500，所以没有测到上限。
+- 创建耗时是 Japan East 客户端上的 SDK 计时；2026-10-09 的实测是从中国的一台工作站发起的。
+- 每个沙箱都在共享的 Blob 容器里写了一个以沙箱命名的小状态文件，与更早的 A 实测一样；这些文件留在了容器里。
+
 ### b-2026-09-27：Foundry hosted agent，部署和两种模型路由
 
 **问题。** B 从 `azd` 到 agent 能回答要多久？新会话和后续回答有多快？
@@ -220,7 +247,7 @@ workshop 的脚本（`module-01/setup.sh`、`module-03/prepare-agent-sandbox.sh`
 **边界。**
 - 只有一次，每种路由两个后续样本：不足以说明 gateway 和 direct 有差异。
 - direct 路由没有经过 Foundry 原生 AI gateway，因为那个门户步骤无法自动化。
-- 这次没有测空闲后的恢复和会话丢失；显式停止后的恢复见 `b-2026-10-15-sessions`。
+- 这次没有测空闲后的恢复和会话丢失；显式停止后的恢复见 `b-2026-10-15-sessions`，空闲等待后的下一轮见 `b-2026-10-18-idle`。
 
 ### b-2026-10-15-sessions：Foundry hosted agent，显式会话生命周期，共 3 次
 
@@ -249,8 +276,98 @@ workshop 的脚本（`module-01/setup.sh`、`module-03/prepare-agent-sandbox.sh`
 
 **边界。**
 - 只从一个客户端跑了三次：客户端计时包含 Japan East → East US 2 的往返和网关，不能与 2026-09-27 从中国发起的实测直接比较。
-- 恢复是在显式 `:stop` 之后测的，不是空闲超时之后。没有内存快照：agent 进程会重新启动，只有 `$HOME`、`/files` 和平台保存的对话会延续。
-- 一次只有一个会话；没有测并发和会话丢失。
+- 恢复是在显式 `:stop` 之后测的，不是空闲超时之后（那种情况见 `b-2026-10-18-idle`）。没有内存快照：agent 进程会重新启动，只有 `$HOME`、`/files` 和平台保存的对话会延续。
+- 一次只有一个会话；并发见 `b-2026-10-18-perf`；没有测会话丢失。
+
+### b-2026-10-18-perf：Foundry hosted agent，按 D 的口径：新会话、后续回答、4 和 8 并发
+
+**问题。** 在 B 上，一次请求开新会话要多快？后续回答多快？同时开 4 个和 8 个新会话是否都能回答？
+
+**输入。** [`tools/measure_responses.py`](tools/measure_responses.py) `--cold 5 --warm-turns 3 --scale 4,8`，即 `d-2026-09-29-perf` 的口径，经 `b-2026-10-15-sessions` 用的网关调用 module-02 agent 的 Responses 端点（[`evidence/runs/b-hosted-agent-2026-10-18/perf.json`](evidence/runs/b-hosted-agent-2026-10-18/perf.json)）。输入原文：
+
+<!-- BEGIN GENERATED: b-perf-input -->
+> 请求：POST <gateway>/agents/<agent>/endpoint/protocols/openai/responses {"input": <input>} with previous_response_id for follow-ups；认证：an API Management subscription key header (RESPONSES_AUTH_HEADER) instead of an Entra token; nothing to acquire inside or outside the timed requests。
+> Agent：`maf-agent` 版本 2（0.5 vCPU、1Gi、`MODEL_ROUTING=direct`、`gpt-5.4-mini`）；no version pinned in the requests; the endpoint's only rule sends 100% to @latest, which read back as version 2 on 2026-10-18。
+> 新会话："Reply with exactly COLD-{i}"（n = 1–5）
+> 同一会话："Remember the code word LANTERN-7. Reply only OK."，然后 "What is the code word? Reply with the word only."，再 "Reply with exactly WARM-{i}"（n = 1、2）
+> 并发时每个会话："Remember SCALE-{i}. Reply only OK."，然后 "What did I ask you to remember? Word only."（先 4 个，再 8 个会话）
+> 客户端：Windows VM in Japan East (WSL Ubuntu) calling the Foundry project in East US 2 through an Azure API Management gateway (the path of b-2026-10-15-sessions)。
+<!-- END GENERATED: b-perf-input -->
+
+**变量与固定项。** 先测新会话，再测同一会话的后续回答，然后同时开 4 个和 8 个会话，各阶段间隔 20 s。agent 版本、网关和客户端固定。
+
+**结果。**
+
+<!-- BEGIN GENERATED: b-perf -->
+新会话：
+
+| 开始（UTC） | 回答 | 新会话 → 回答，s | 首字节，s |
+|---|---|---:|---:|
+| 03:49:28 | COLD-1 | 11.48 | 11.48 |
+| 03:49:42 | COLD-2 | 11.03 | 11.03 |
+| 03:49:57 | COLD-3 | 11.57 | 11.57 |
+| 03:50:11 | COLD-4 | 10.98 | 10.98 |
+| 03:50:25 | COLD-5 | 11.0 | 11.0 |
+
+中位数 11.03 s（10.98–11.57；n=5）。
+
+同一会话的后续回答：
+
+| 轮次 | 回答 | 客户端耗时，s |
+|---|---|---:|
+| 1（新会话） | OK | 11.05 |
+| 2 | LANTERN-7 | 3.94 |
+| 3 | WARM-1 | 4.08 |
+| 4 | WARM-2 | 3.88 |
+
+后续第 2–4 轮：中位数 3.94 s（3.88–4.08；n=3）。
+
+并发：
+
+| 并发 | 回答 | 读回自己的词 | 写入轮次，s |
+|---:|---|---|---:|
+| 4 | 4/4 | 4/4 | 10.95–12.32 |
+| 8 | 8/8 | 8/8 | 10.02–12.63 |
+
+每个请求都返回 HTTP 200；工具对每个请求只发一次。
+<!-- END GENERATED: b-perf -->
+
+**边界。**
+- 只从一个客户端跑了一轮：客户端计时包含 Japan East → East US 2 的往返和网关，所以可以和 `b-2026-10-15-sessions` 比，不能和 D 从中国笔记本发起的实测比。
+- B 看不到 pod；平台把这 8 个会话放在哪里跑，观察不到。
+- 同时 8 个会话说明 B 都回答了、没有拒绝，并没有测到上限。
+
+### b-2026-10-18-idle：Foundry hosted agent，17 分钟没有请求后的下一轮
+
+**问题。** 默认空闲超时是 15 分钟。一个会话超过这么久没有收到请求，下一轮要多久？会话的文件和对话还在不在？
+
+**输入。** [`tools/measure_sessions.py`](tools/measure_sessions.py) `--resume-after idle --idle-wait 1020`，经网关调用版本 `2`（[`evidence/runs/b-sessions-2026-10-18/idle.json`](evidence/runs/b-sessions-2026-10-18/idle.json)），共 3 次：创建会话，写入标记文件，先问 "Where is Bangkok? Answer in one short sentence."，再问 "How many questions have I asked before this one? Number only."，然后 1020 s 不向会话发任何请求，读一次状态，再问两次第二个问题，读回标记文件，删除会话。对照组（[`idle-control.json`](evidence/runs/b-sessions-2026-10-18/idle-control.json)）相同，只是 `--idle-wait 300`，在第一组结束后才开始。
+
+**变量与固定项。** 只改等待时长：1020 s，超过默认的 900 s；或 300 s，低于它。agent 版本（自身没有设置 `idle_timeout_seconds`，所以用默认值）、问题、网关和客户端固定。
+
+**结果。**
+
+<!-- BEGIN GENERATED: b-idle -->
+单位为秒，客户端计时；服务端耗时是响应的 `completed_at` 减 `created_at`（整秒）；最后一列是 agent 依次给出的回答。
+
+| 等待，s | 次 | 等待后的状态 | 等待前的后续 | 下一轮 | 该轮服务端耗时 | 再下一轮 | 文件保留 | 回答 |
+|---:|---|---|---:|---:|---:|---:|---|---|
+| 1021.51 | 1 | `active` | 4.72 | 12.67 | 2 | 3.88 | 是 | Bangkok is the capital city of Thailand in Southeast Asia. / 2 / 3 / 4 |
+| 1021.48 | 2 | `idle` | 3.81 | 12.71 | 2 | 5.42 | 是 | Bangkok is the capital city of Thailand in Southeast Asia. / 2 / 3 / 4 |
+| 1021.22 | 3 | `idle` | 3.63 | 12.12 | 2 | 3.99 | 是 | Bangkok is the capital city of Thailand in Southeast Asia. / 2 / 3 / 4 |
+| **1021.48** | **中位数** |  | **3.81** | **12.67** | **2** | **3.99** |  |  |
+| 301.75 | 1 | `active` | 3.7 | 5.76 | 3 | 4.16 | 是 | Bangkok is the capital city of Thailand in Southeast Asia. / 2 / 3 / 4 |
+| 301.45 | 2 | `active` | 3.85 | 5.16 | 2 | 4.4 | 是 | Bangkok is the capital city of Thailand in Southeast Asia. / 2 / 3 / 4 |
+| 301.47 | 3 | `active` | 4.21 | 4.43 | 2 | 3.89 | 是 | Bangkok is the capital city of Thailand in Southeast Asia. / 2 / 3 / 4 |
+| **301.47** | **中位数** |  | **3.85** | **5.16** | **2** | **4.16** |  |  |
+<!-- END GENERATED: b-idle -->
+
+等待后的状态见第三列。它只读了一次，不能说明平台何时、是否释放了算力。约 5 分钟后，下一轮中位数 <!--v:b.idle5.next.median-->5.16<!--/v--> s，比等待前的后续回答（<!--v:b.idle5.warm.median-->3.85<!--/v--> s）略长一些。约 17 分钟后为 <!--v:b.idle.next.median-->12.67<!--/v--> s，和显式 `:stop` 之后的恢复差不多（`b-2026-10-15-sessions` 中为 <!--v:b.sess.resume.median-->12.02<!--/v--> s），而服务端最多只把其中 <!--v:b.idle.next_server.max-->2<!--/v--> s 记为生成时间。所以多出的时间出现在 5 到 17 分钟之间。这与平台在 15 分钟的默认值之后释放会话算力一致，17 分钟那组里状态仍读到 `active` 的那一次也是如此。这是从耗时推断的，B 不暴露它的算力。
+
+**边界。**
+- 每种等待只从一个客户端跑三次；每次只在等待后读一次状态。
+- B 不暴露算力，会话的算力是否已释放，只能从下一轮的耗时推断。
+- 只要有一次在下一轮之前读到的状态仍是 `active`，`measure_sessions.py` 对这一组就返回退出码 1：按设计，退出码 0 要求那里是 `idle` 或 `stopped`。
 
 ### c-2026-09-27：AKS + agent-sandbox，隔离、pod 丢失、挂起和恢复
 
@@ -276,9 +393,72 @@ workshop 的脚本（`module-01/setup.sh`、`module-03/prepare-agent-sandbox.sh`
 <!-- END GENERATED: c-run -->
 
 **边界。**
-- 只有一次。
+- 只有一次；每一步各三次、在 pod 内计时回答的实测见 `c-2026-10-18-perf`。
 - 用来对比的 runc pod 跑在 Ubuntu 系统节点池上，所以两个内核的差别既来自运行时，也来自节点。结论依据的是 Kata 内核的 `mshv` 后缀、runtime class，以及 Learn 写明的技术栈。
 - 请求唤醒不是 agent-sandbox 的功能；恢复是手动 patch 的。
+
+### c-2026-10-18-perf：AKS + agent-sandbox，不挂卷和挂 Blob PVC 的冷启动、pod 丢失、挂起/恢复、4 和 8 并发
+
+**问题。** 不挂外部卷时，以及挂 workshop 的 Blob PVC 时，Sandbox 启动并回答各要多快？三次实测中，pod 丢失和一次挂起/恢复各要多久？一次能放下几个 Sandbox？
+
+**输入。** [`tools/measure_c.py`](tools/measure_c.py) `--cold 3 --pvc 3 --scale 4,8`，针对 workshop 的集群（[`evidence/runs/c-aks-agent-sandbox-2026-10-18/perf.json`](evidence/runs/c-aks-agent-sandbox-2026-10-18/perf.json)）。每个测试 Sandbox 都复制 workshop 的 `agent-host` Sandbox 的 spec，回答通过 `kubectl exec` 在 pod 内向 `/reflect` POST：
+
+<!-- BEGIN GENERATED: c18-input -->
+> 集群：the cluster of c-2026-09-27, started for this run; the workshop's own agent-host Sandbox kept running on the Kata node throughout；Kubernetes 1.35.8，Free 层级；系统节点池 1 x standard_d4ads_v7 Ubuntu；Kata 节点池 Standard_D4s_v3 AzureLinux KataVmIsolation, autoscale 1-10, 1 node at start；agent-sandbox v0.5.2 (controller image read back 2026-10-18)。
+> 每个测试 Sandbox 复制命名空间 `agent` 里 workshop 的 `agent-host` Sandbox 的 spec，换一个新名字并加标签 `app=agent-host-measure`：镜像 `<registry>.azurecr.io/agent-host:latest`，运行时类 `kata-vm-isolation`，requests 500m CPU、512Mi，limits 2000m CPU、2Gi。`AGENT_ID` 取自 pod 名，所以每个副本把对话存在自己的状态文件里。
+> 请求：POST http://127.0.0.1:8080/reflect {"query": <input>}, sent with kubectl exec python3 inside the agent container。
+> 第一个问题："Where is Bangkok? Answer in one short sentence."
+> 之后每一轮："How many questions have I asked before this one? Number only."；挂 PVC 时在删除 pod 后、挂起/恢复后各再问一次
+> 并发时每个 Sandbox（不挂卷）："Remember SCALE-{k}. Reply only OK."，然后 "What did I ask you to remember? Word only."（先 4 个，再 8 个 Sandbox）
+> 客户端：Windows VM in Japan East (WSL Ubuntu); kubectl against the cluster in East US 2; answers timed inside the pod with kubectl exec。
+<!-- END GENERATED: c18-input -->
+
+**变量与固定项。** 挂或不挂 Blob PVC（不挂时，从副本中去掉 `persistentVolumeClaim` 卷和它的挂载），以及同时 4 个或 8 个 Sandbox，每次之间间隔 20 s。集群、镜像、agent 和客户端固定。
+
+**结果。** 冷启动和后续回答：
+
+<!-- BEGIN GENERATED: c18-runs -->
+| Sandbox | 卷 | `kubectl apply` → Ready，s | 第一个回答，s | 冷启动合计，s | 后续，s | 对话长度 |
+|---|---|---:|---:|---:|---:|---|
+| cold-1 | 无 | 18.9 | 8.44 | 27.34 | 1.08 | 1, 2 |
+| cold-2 | 无 | 15.32 | 8.5 | 23.82 | 1.0 | 1, 2 |
+| cold-3 | 无 | 16.45 | 7.82 | 24.27 | 1.03 | 1, 2 |
+| pvc-1 | Blob PVC | 16.81 | 7.38 | 24.19 | 36.73 | 1, 2, 3, 4 |
+| pvc-2 | Blob PVC | 16.26 | 10.42 | 26.68 | 1.78 | 1, 2, 3, 4 |
+| pvc-3 | Blob PVC | 16.46 | 7.58 | 24.04 | 1.22 | 1, 2, 3, 4 |
+
+不挂卷：apply → Ready 中位数 16.45 s（15.32–18.9；n=3），第一个回答 中位数 8.44 s（7.82–8.5；n=3），冷启动合计 中位数 24.27 s（23.82–27.34；n=3）。挂 Blob PVC：apply → Ready 中位数 16.46 s（16.26–16.81；n=3），第一个回答 中位数 7.58 s（7.38–10.42；n=3），冷启动合计 中位数 24.19 s（24.04–26.68；n=3）。挂 PVC 时的后续回答：36.73, 1.78, 1.22 s（n=3）；记录里看不出慢的那一次时间花在哪里。回答在 pod 内计时；外层的 `kubectl exec` 往返每次在客户端多花 2.53–3.21 s，不计入。
+<!-- END GENERATED: c18-runs -->
+
+挂 Blob PVC 时的 pod 丢失和挂起/恢复：
+
+<!-- BEGIN GENERATED: c18-pvc -->
+| Sandbox | 删除 pod → Ready，s | 回答，s | Suspended → pod 消失，s | Running → Ready，s | 回答，s | 恢复 → 回答，s |
+|---|---:|---:|---:|---:|---:|---:|
+| pvc-1 | 25.24 | 7.72 | 9.24 | 15.87 | 7.47 | 23.34 |
+| pvc-2 | 24.79 | 7.66 | 9.1 | 15.93 | 6.52 | 22.45 |
+| pvc-3 | 23.25 | 7.11 | 9.45 | 17.28 | 6.95 | 24.23 |
+| **中位数** | **24.79** |  | **9.24** | **15.93** |  | **23.34** |
+
+挂起期间，每次 Sandbox 的 Ready 条件都是 `False`（`SandboxSuspended`）。删除 pod 后、挂起/恢复后对话长度都接着增长（见上表最后一列），说明状态每次都从 Blob PVC 恢复。恢复 → 回答是 Running patch 到 Ready 再加 pod 内的回答。
+<!-- END GENERATED: c18-pvc -->
+
+不挂卷时的并发：
+
+<!-- BEGIN GENERATED: c18-scale -->
+| 并发 | 回答 | Apply → Ready，s | 每个 Kata 节点上的 Sandbox | 全部 Sandbox，s |
+|---:|---|---:|---|---:|
+| 4 | 4/4 | 18.32–19.96 | node-1：4 | 42.15 |
+| 8 | 8/8 | 18.52–141.79 | node-1：6、node-2：2 | 159.28 |
+
+开始时只有 1 个 Kata 节点，workshop 自己的 Sandbox 也在上面。8 个同时开时，6 个测试 Sandbox 放进了这个节点（每个 requests 500m CPU）；另外 2 个跑在集群自动扩缩容在测试中新加的节点上，141.55–141.79 s 后才就绪。结束时 Kata 节点数：2。每个 Sandbox 都回答了自己的 `SCALE-<k>`，并已删除。
+<!-- END GENERATED: c18-scale -->
+
+**边界。**
+- 每种情况三次、每个并发档一次，只有一个客户端。
+- `c-2026-09-27` 在 LoadBalancer 处计时回答，而且那次 apply 是该集群上的第一次；这几次在 pod 内计时回答，节点上已有镜像，所以两组的计时位置和缓存都不同。
+- Blob PVC 已经绑定好；挂载它在 apply 时测不出额外耗时。新建并绑定 PVC 的耗时没有测。
+- 每个副本都在共享的 Blob 容器里写了自己的状态文件（以 pod 命名）；三次挂 PVC 实测的文件留在了容器里，更早实测的文件也一样。
 
 ### d-2026-09-29-placement：BYO-AKS 的会话跑在哪里
 
@@ -388,6 +568,38 @@ workshop 的脚本（`module-01/setup.sh`、`module-03/prepare-agent-sandbox.sh`
 <!-- END GENERATED: d-recovery -->
 
 **边界。** 只删了一次。后续那一轮发给的是另一个存活会话，而不是被删 pod 的会话。它说明节点池继续服务，而且另一个会话保留了 `LANTERN-7`；它**不能**证明被删会话自身的连续性。
+
+### d-2026-10-18-sessions：BYO-AKS，显式会话生命周期，共 3 次
+
+**问题。** 会话接口的停止和恢复在 BYO-AKS 上能不能用？各要多久？会话的文件和对话能否跨过停止和恢复保留下来？
+
+**输入。** [`tools/measure_sessions.py`](tools/measure_sessions.py) `--path D`，在项目端点上调用私有预览示例 agent 的版本 `3`，用客户端 VM 的托管身份认证（[`evidence/runs/d-byoaks-2026-10-18/sessions.json`](evidence/runs/d-byoaks-2026-10-18/sessions.json)）。步骤和问题与 `b-2026-10-15-sessions` 相同："Where is Bangkok? Answer in one short sentence."，之后每一轮都问 "How many questions have I asked before this one? Number only."；`:stop` 之前写入标记文件，恢复那一轮之后读回。
+
+**变量与固定项。** 三次之间没有变量。实测期间 Kata 节点池有两个 `Standard_D4s_v5` 节点（见边界）。
+
+**结果。**
+
+<!-- BEGIN GENERATED: d-sessions -->
+单位为秒，客户端计时；最后一列是 agent 依次给出的回答。
+
+| 次 | 创建 → active | 第一个回答 | 后续 | 停止 → idle | 停止后回答 | 再下一轮 | 文件保留 | 回答 |
+|---|---:|---:|---:|---:|---:|---:|---|---|
+| 1 | 11.51 | 11.01 | 10.05 | 23.55 | 19.78 | 10.05 | 是 | Bangkok is the capital city of Thailand in Southeast Asia. / 2 / 3 / 4 |
+| 2 | 9.18 | 10.71 | 11.05 | 19.54 | 22.4 | 10.95 | 是 | Bangkok is the capital city of Thailand in Southeast Asia. / 2 / 3 / 4 |
+| 3 | 9.32 | 11.39 | 10.66 | 22.72 | 19.14 | 10.71 | 是 | Bangkok is the capital city of Thailand in Southeast Asia. / 2 / 3 / 4 |
+| **中位数** | **9.32** | **11.01** | **10.66** | **22.72** | **19.78** | **10.71** |  |  |
+
+共 35 次 HTTP 尝试：200 ×23、201 ×6、204 ×6；没有重试。
+
+三次实测中的会话 pod：新出现 6 个，每个会话 2 个，每个出现后 3–4 s 进入 Running（变化时的 pod 年龄）。同一会话的两个 pod 都结束了（Terminating，然后 Completed）；年龄与 `:stop` 结束第一个、删除会话结束第二个相符。`kubectl get pods -w` 只记录顺序和年龄，没有时间戳。
+<!-- END GENERATED: d-sessions -->
+
+服务端记录的每轮生成时间为 <!--v:d.sess.server.range-->1–3<!--/v--> s；客户端计时的其余部分是网络链路和端点，停止后的那一轮还包括启动新的会话 pod。
+
+**边界。**
+- 只从一个客户端跑了三次，它从 Japan East 直接调用 East US 2 的项目端点。
+- 节点池只有一个节点时，每次创建会话都被拒绝，返回 `429 aks_quota_exceeded`：集群启动后恢复的 2026-09-29 会话 Deployment 占满了这个节点的 CPU requests。我们为这几次实测加了第二个节点，测完后撤掉；旧会话保留未动。
+- 私有预览：BYO-AKS 上会话接口的行为可能变化。
 
 ### e-2026-10-14-agent：Foundry Prompt Agent + Azure VM 上的 E2B Firecracker 沙箱，共 3 次
 
@@ -744,7 +956,7 @@ host a 上的空闲 `base` 沙箱：
 
 ### 可以重算的数字
 
-上面每个发布指标都来自 [`evidence/measurements.json`](evidence/measurements.json)。[`tools/build_measurements.py`](tools/build_measurements.py) 会先按 [`evidence/runs/INDEX.json`](evidence/runs/INDEX.json) 校验每个文件的 SHA-256，再从 `evidence/runs/` 重算全部指标。它还检查：A 每次的冷启动等于创建加第一个回答、恢复等于 resume 加回答；D 每个冷启动 pod 的创建到 Ready 与 Kubernetes 时间戳一致，且是 `kata-vm-isolation`；D 的后续会话和删除 pod 后使用的另一个存活会话都记住了 `LANTERN-7`。奇数个样本才给中位数，偶数个样本直接列出数值。
+上面每个发布指标都来自 [`evidence/measurements.json`](evidence/measurements.json)。[`tools/build_measurements.py`](tools/build_measurements.py) 会先按 [`evidence/runs/INDEX.json`](evidence/runs/INDEX.json) 校验每个文件的 SHA-256，再从 `evidence/runs/` 重算全部指标。它还检查：A 每次的冷启动等于创建加第一个回答、恢复等于 resume 加回答；D 每个冷启动 pod 的创建到 Ready 与 Kubernetes 时间戳一致，且是 `kata-vm-isolation`；D 的后续会话和删除 pod 后使用的另一个存活会话都记住了 `LANTERN-7`。对 2026-10-18 的实测：C 每次的冷启动等于 apply → Ready 加第一个回答，恢复到回答等于 Ready 加回答；B 和 D 的会话实测必须保留文件和问题计数；每个并发会话的“记住”标记必须与它的回答一致，A 和 C 不能留下任何资源。奇数个样本才给中位数，偶数个样本直接列出数值。
 
 耗时字段和发布样本必须是有限、非负的数值，不能用布尔值或数字字符串代替。可选计时字段中的 null 仍表示未测，不能进入发布样本。C 的恢复里程碑必须满足 Ready → LoadBalancer 健康 → 第一个回答；D 已配对的 pod 就绪耗时不能超过该请求的总耗时（允许时间戳舍入误差），并发统计必须有每个会话的记录。JSON 输出拒绝 NaN 和无穷值。
 
@@ -754,16 +966,18 @@ host a 上的空闲 `base` 沙箱：
 
 **部署证据边界。** 本节是在应用部署后执行的可选检查，不能代替应用创建。README 的完整参数化流程尚未在全新订阅逐条重跑；历史运行成功不能证明每条改写后的部署命令都成功过。保留的 Module 1 共享底座部署用时 <!--v:f.deploy.value-->3<!--/v--> 分钟。
 
-**在线测量。** 回到 `HOSTING_REPO`、加载 `.env`，把已部署的 B 或 D 端点填到 `AGENT_RESPONSES_URL`；测 E 时按 README 第 7 步导出 `E2B_API_KEY`。只运行对应方案的测量。D 的恢复命令会删除会话 pod；A 的测量会停止并删除它新建的沙箱；E 的测量会创建并删除自己的 agent 版本、对话和沙箱，`perf` 会同时开 8 个会话。这些生命周期操作需事先得到明确授权。
+**在线测量。** 回到 `HOSTING_REPO`、加载 `.env`，把已部署的 B 或 D 端点填到 `AGENT_RESPONSES_URL`；测 E 时按 README 第 7 步导出 `E2B_API_KEY`。只运行对应方案的测量。D 的恢复命令会删除会话 pod；A 的测量会停止并删除它新建的沙箱；E 的测量会创建并删除自己的 agent 版本、对话和沙箱，`perf` 会同时开 8 个会话；`measure_c.py` 会在 workshop 的 Sandbox 旁边创建并删除自己的 Sandbox，同时开 8 个可能让集群自动扩缩容加一个 Kata 节点。这些生命周期操作需事先得到明确授权。
 
 ```bash
 cd "$HOSTING_REPO"
 set -a && . ./.env && set +a
 python tools/measure_aca.py agent --runs 3
+python tools/measure_aca.py scale --scale 4,8
 python tools/measure_responses.py --cold 3 --warm-turns 3
 python tools/measure_responses.py --cold 3 --warm-turns 3 --scale 4,8 --recovery --observe
 python tools/measure_e2b.py agent --runs 3
 python tools/measure_e2b.py perf --cold 5 --scale 4,8 --recovery
+python tools/measure_c.py --cold 3 --pvc 3 --scale 4,8
 ```
 
 退出码 0 要求每个请求阶段都通过；容量耗尽的拒绝会保存，但仍退出 1。历史工作负载和时钟不一致，不能用它给产品排名。
@@ -808,7 +1022,7 @@ python -m pytest -q
 
 CI 在 Ubuntu 上用 Python 3.12 运行同样的检查（[工作流](https://github.com/xinyuwei-david/Azure-Agent-Sandbox-Hosting/blob/main/.github/workflows/docs-ci.yml)）。
 
-在线检查需要 Azure 和 README 里创建的资源：`tools/aca_sandbox.py`、`tools/measure_aca.py`、`tools/measure_responses.py`、`tools/measure_e2b.py`、`tools/e2b_agent.py`，以及不带 `--pods-json` 的 `tools/check_isolation.py`。
+在线检查需要 Azure 和 README 里创建的资源：`tools/aca_sandbox.py`、`tools/measure_aca.py`、`tools/measure_responses.py`、`tools/measure_sessions.py`、`tools/measure_c.py`、`tools/measure_e2b.py`、`tools/e2b_agent.py`，以及不带 `--pods-json` 的 `tools/check_isolation.py`。
 
 这里没有测的：本仓库整理完成后，这些工具在全新订阅上的端到端运行（它们是实测脚本改为读配置后的版本；`--help` 和离线逻辑已测试），East US 2 以外的区域，以及用 Azure Cloud Shell 作为操作环境。
 
@@ -816,12 +1030,12 @@ CI 在 Ubuntu 上用 Python 3.12 运行同样的检查（[工作流](https://git
 
 **边界。**
 
-- `LOCAL_MEASUREMENT`：A 的完整 agent 时延 n=3；B 是一轮端到端实测加三次会话接口实测，C 是一轮端到端实测；D 是一轮压测，其中镜像已缓存的冷启动 n=5、后续回答 n=3，会话落地和恢复各一次。依赖某个数字之前，请按本页在线测量命令重新测。
-- `LOCAL_MEASUREMENT`：A 和 C 使用 workshop reflection agent；B 使用 Agent Framework 和 ResponsesHostServer；D 使用私有预览 sample。B 的 2026-09-27 实测和 D 包含 Foundry 端点和位于中国的客户端（往返 <!--v:d.client_rtt.range-->320–800<!--/v--> ms）；B 的 2026-10-15 实测客户端在 Japan East，并经过 API Management 网关；A 的回答在沙箱内计时；C 在它的 LoadBalancer 处计时。表中每一行比较的是现场实现，不是相同容器或相同网络链路。
+- `LOCAL_MEASUREMENT`：A 的完整 agent 时延 n=3，另有同时 4 个和 8 个沙箱各一次；B 是一轮端到端实测、三次会话接口实测、一轮 D 口径压测（冷启动 n=5、后续回答 n=3、4 和 8 并发），以及两种空闲等待后各三次；C 是一轮端到端实测，加不挂卷和挂 Blob PVC 各三次（含 pod 丢失和挂起/恢复），以及 4 和 8 并发各一次；D 是一轮压测，其中镜像已缓存的冷启动 n=5、后续回答 n=3，会话落地和恢复各一次，另有三次会话接口实测。依赖某个数字之前，请按本页在线测量命令重新测。
+- `LOCAL_MEASUREMENT`：A 和 C 使用 workshop reflection agent；B 使用 Agent Framework 和 ResponsesHostServer；D 使用私有预览 sample。B 的 2026-09-27 实测和 D 包含 Foundry 端点和位于中国的客户端（往返 <!--v:d.client_rtt.range-->320–800<!--/v--> ms）；B 的 2026-10-15 和 2026-10-18 实测客户端在 Japan East，并经过 API Management 网关；D 的 2026-10-18 实测从 Japan East 直接调用端点；A 的回答在沙箱内计时；C 在 2026-09-27 于它的 LoadBalancer 处计时，2026-10-18 在 pod 内计时。表中每一行比较的是现场实现，不是相同容器或相同网络链路。
 - `LOCAL_MEASUREMENT`：A 加上私有 Blob 卷后创建耗时为 <!--v:a.attr.vnetvolume.range-->15.79–25.12<!--/v--> s；只加镜像、VNet 或端口时为 <!--v:a.attr.small.range-->1.6–2.7<!--/v--> s。
 - `LOCAL_MEASUREMENT`：最早的 D 会话 pod 在创建至少 <!--v:d.idle.value-->87<!--/v--> 分钟后仍是 Running。这是 pod 的年龄，不是空闲时长：没有保留最后一次请求的时间戳。它不能证明配置的空闲超时，也不能证明期间始终空闲。
 - `LOCAL_MEASUREMENT`：按示例的 500m CPU / 1 Gi 请求加 600 Mi Kata 开销，D 每个 `Standard_D4s_v5` 节点最多容纳 <!--v:d.capacity.per_node-->5<!--/v--> 个会话；同时运行系统 pod 的节点更少。
-- `NOT_MEASURED`：B 在空闲超时后的恢复（显式停止后的恢复见 `b-2026-10-15-sessions`）和会话丢失；A 的宿主机丢失；服务端结束会话后 D 的行为；由 Foundry 治理的 agent 按任务调用 ACA 沙箱；有空闲容量时的并发时延；E2B 以外的其他第三方沙箱；E2B Bring Your Own Cloud 和 private cloud；E2B 官方的 Azure Terraform 模块，包括它用新盘替换不健康实例的规模集行为；整台 E2B VM 或其磁盘丢失。
+- `NOT_MEASURED`：B 的平台何时回收空闲会话（`b-2026-10-18-idle` 只在等待结束后读了一次状态）和 B 的会话丢失；A 的宿主机丢失；服务端结束会话后 D 的行为；由 Foundry 治理的 agent 按任务调用 ACA 沙箱；D 在有空闲容量时的并发时延；E2B 以外的其他第三方沙箱；E2B Bring Your Own Cloud 和 private cloud；E2B 官方的 Azure Terraform 模块，包括它用新盘替换不健康实例的规模集行为；整台 E2B VM 或其磁盘丢失。
 - `SOURCE_FACT`：E2B Embed“is one machine, by design”；E2B 超出单机的方式是 private cloud（开发中）、由 E2B 在你的账号里运维的 Bring Your Own Cloud，以及 E2B Cloud（[Embed](https://github.com/e2b-dev/runtime/blob/588e5b9500b0987bc5a700d91483b03f0ae7d2a2/embed/README.md#when-one-node-is-not-enough)）。它只提供明文 HTTP，自身不带 TLS。Azure Terraform 安装方式是只有一台实例的规模集，没有持久数据卷：替换出的实例从新盘启动，自建的模板会丢失；停掉服务栈后，`/health` 不响应约两分钟，实例就会被替换（[Azure 指南](https://github.com/e2b-dev/runtime/blob/588e5b9500b0987bc5a700d91483b03f0ae7d2a2/embed/terraform/azure/README.md#limitations)）。
 - `SOURCE_FACT`：E2B 的 Compose 指南要求按“同时运行的沙箱数”设定 `HUGEPAGES`，并写明 512 MiB 的 `base` 沙箱满内存时占 256 页、空闲时约 90 页（[requirements](https://github.com/e2b-dev/runtime/blob/588e5b9500b0987bc5a700d91483b03f0ae7d2a2/embed/compose/README.md#requirements)）。在 `e-2026-10-15-multi` 中，每个空闲的 `base` 沙箱在创建时就预留了 256 页，所以默认大页池只放下 7 个，不是约 20 个。
 - `SOURCE_FACT`：ACA Sandboxes 从“prewarmed pools for near-instant availability”启动，恢复“with sub-second restore times”（[概览](https://learn.microsoft.com/azure/container-apps/sandboxes-overview)）。可选档位（vCPU / GB）：XS 0.25 / 0.5、S 0.5 / 1、M 1 / 2、L 2 / 4、XL 4 / 8。可配置空闲自动挂起；Memory 保存内存和磁盘，Disk 只保存磁盘。本次 900 s 是本地设置，不是全服务默认值。
@@ -829,7 +1043,7 @@ CI 在 Ubuntu 上用 Python 3.12 运行同样的检查（[工作流](https://git
 - `SOURCE_FACT`：hosted agent 的[沙箱规格](https://learn.microsoft.com/azure/foundry/agents/concepts/hosted-agents#sandbox-sizes)为 0.5 vCPU / 1 GiB、1 vCPU / 2 GiB、2 vCPU / 4 GiB；agent 版本上设置的值作用于每个会话，不选择 VM SKU。workshop 的 module-02 使用 0.5 vCPU / 1 GiB。
 - `SOURCE_FACT`：AKS Pod Sandboxing 由 Azure Linux 主机 + Microsoft Hyper-V + Cloud Hypervisor + Kata Containers 组成；节点 VM 必须是支持嵌套虚拟化的第 2 代规格；每个 pod VM 的内存等于 pod 的内存 limit（未设置时为 512 Mi），CPU limit 的小数部分向上取整到整数 vCPU（[pod sandboxing](https://learn.microsoft.com/azure/aks/use-pod-sandboxing)）。
 - `SOURCE_FACT`：agent-sandbox v0.5.2 支持绝对到期时间 `shutdownTime`；到期后删除 pod 和 Service，`shutdownPolicy` 决定是否保留 Sandbox 对象（[官方 API](https://github.com/kubernetes-sigs/agent-sandbox/blob/v0.5.2/docs/api.md)）。这是定时到期回收，不是按请求计时的空闲检测；`operatingMode` 仍提供显式挂起和恢复。
-- `NOT_VERIFIED`：本次未核实到 BYO-AKS 官方公开的空闲策略、挂起支持或完整节点 SKU 清单。预览要求须向产品组确认，pod 年龄的现场观察不能证明这些策略。
+- `NOT_VERIFIED`：本次未核实到 BYO-AKS 官方公开的空闲策略或完整节点 SKU 清单；会话接口的显式 `:stop` 和恢复在 `d-2026-10-18-sessions` 中可用，这是对当前预览 build 的观察，不是文档写明的策略。预览要求须向产品组确认，pod 年龄的现场观察不能证明这些策略。
 - `SOURCE_FACT`：[ACA 官方配额说明](https://sandboxes.azure.com/docs/sandboxes/limits) 按并发 active cores 计量，停止的沙箱不占该配额；这不是固定会话数上限。
 - `SOURCE_FACT`：[AKS Pod Sandboxing](https://learn.microsoft.com/azure/aks/concepts-pod-sandboxing) 只隔离计算，不隔离控制面、存储与数据路径，也不限制 cluster-admin 的权限。隔离工具检查 runtime 配置；要求执行的内核读取必须成功，版本字符串不是硬件证明。
 - `SOURCE_FACT`：[固定版本 module-02 的实现](https://github.com/oxcp/ainotes/blob/905f2c2/agenthost/module-02/agent-src/main.py) 中，`MODEL_ROUTING=direct` 调用 Foundry project endpoint。如果项目注册了原生 AI Gateway，该请求仍可能经 APIM；不能只凭模式名判断它绕过了网关。
@@ -840,7 +1054,7 @@ CI 在 Ubuntu 上用 Python 3.12 运行同样的检查（[工作流](https://git
 
 **目录。**
 
-- [`tools/`](tools/)：`aca_sandbox.py`、`measure_aca.py`、`measure_responses.py`、`measure_e2b.py`、`measure_code_interpreter.py`、`measure_sessions.py`、`e2b_agent.py`、`check_isolation.py`（在线）；`export_evidence.py`（仅作者可运行）、`build_measurements.py`、`render_docs.py`、`build_diagrams.py`、`validate_docs.py`（离线）。
+- [`tools/`](tools/)：`aca_sandbox.py`、`measure_aca.py`、`measure_responses.py`、`measure_e2b.py`、`measure_code_interpreter.py`、`measure_sessions.py`、`measure_c.py`、`e2b_agent.py`、`check_isolation.py`（在线）；`export_evidence.py`（仅作者可运行）、`build_measurements.py`、`render_docs.py`、`build_diagrams.py`、`validate_docs.py`（离线）。
 - [`evidence/claims.json`](evidence/claims.json)：A–E 的 canonical 名称、状态、归属、隔离边界、选型合同、字母映射和实测顺序；[`evidence/runs/`](evidence/runs/)：脱敏后的实测记录，带私有源文件的 SHA-256，以及 `INDEX.json`；[`evidence/measurements.json`](evidence/measurements.json)：所有发布的指标。
 - [`images/`](images/)：架构图、它们的生成源 `tools/build_diagrams.py`、8 个 Azure 图标和 [`SOURCES.json`](images/SOURCES.json)。
 - [`config/.env.example`](config/.env.example)：全部配置项；[`tests/`](tests/)：离线测试和测试数据。

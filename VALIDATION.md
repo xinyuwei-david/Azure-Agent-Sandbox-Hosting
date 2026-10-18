@@ -20,18 +20,19 @@ Why these clocks:
 |---|---|---|---|
 | Cold, A (component sum) | SDK create call → Running | add first `/reflect` answer duration | create on the client; answer inside the sandbox |
 | Cold, B and D | client POST of a new session | full response body read | client, through the Foundry endpoint |
-| Cold, C (component sum) | `kubectl apply` → Sandbox Ready | add first answer duration at the LoadBalancer | client via its own LoadBalancer; model inference still uses APIM |
+| Cold, C (component sum) | `kubectl apply` → Sandbox Ready | add the first answer's duration, at the LoadBalancer (2026-09-27) or inside the pod (2026-10-18) | client; the answer through its own LoadBalancer or with `kubectl exec` inside the pod; model inference still uses APIM |
 | Warm | request of the next turn | its answer | as for cold |
 | Resume, A (component sum) | SDK resume call → Running | add first answer duration after resume | resume on the client; answer inside |
-| Resume, C | `operatingMode: Running` patch | first answer at the LoadBalancer | client |
-| Pod lost | pod deleted | replacement pod Ready (Kubernetes timestamps) | cluster |
-| B session API: create, stop | `POST .../endpoint/sessions`, `POST .../sessions/{id}:stop` | the session reads `active`, `idle` | client; failed attempts and their 2 s pauses included |
+| Resume, C | `operatingMode: Running` patch | first answer at the LoadBalancer (2026-09-27); Ready plus the answer timed inside the pod (2026-10-18, component sum) | client |
+| Pod lost | pod deleted | replacement pod Ready (Kubernetes timestamps; C on 2026-10-18: polled from the client) | cluster |
+| At once, A and C (2026-10-18) | N creates or applies at the same time | each sandbox's second answer, timed inside it; the level ends when the last one is deleted | create, apply and delete on the client; answers inside |
+| B and D session API: create, stop | `POST .../endpoint/sessions`, `POST .../sessions/{id}:stop` | the session reads `active`, `idle` | client; failed attempts and their 2 s pauses included |
 | Cold, E A protocol (component sum) | `Sandbox.create` (`code-interpreter-v1`; `base` before 2026-10-17) → it returns | add the first Prompt Agent turn: first `POST /openai/v1/responses` until the final answer, every tool round trip included | the tool's process; on the E2B host VM in E's runs |
 | Cold, E D protocol | conversation create | the turn's final answer, with `Sandbox.create` in between (one stopwatch) | as above |
 | Resume, E (component sum) | `Sandbox.connect` → it returns | add the first turn after it | as above |
 | Pause, E | `beta_pause` | it returns | as above |
 
-E's clocks and those of `b-2026-10-15-sessions` are `time.perf_counter()` in the measuring process; a range is the minimum to the maximum. A and E wait 5 s between the end of stop or pause and the start of resume, outside every clock. The E concurrency tables give sandbox create plus turn 1, the clock of the 2026-10-14 driver.
+E's clocks and those of `b-2026-10-15-sessions` and of every 2026-10-18 run are `time.perf_counter()` in the measuring process; a range is the minimum to the maximum. A, E and C's 2026-10-18 runs wait 5 s between the end of stop, pause or suspend and the start of resume, outside every clock. The E concurrency tables give sandbox create plus turn 1, the clock of the 2026-10-14 driver.
 
 A's answers are timed inside the sandbox because the 2026-09-27 run could not reach the port from the operator address (the port's IP rule saw rotating Azure egress addresses). The paths therefore do not share a network path, and a row compares implementations, not networks.
 
@@ -50,9 +51,9 @@ A's cold is `create_total_s + first.guest_s` and resume-to-answer is `resume_tot
 | `ask` | `sandbox.exec("python3 -c …")`, which POSTs `{"query": …}` to `http://127.0.0.1:8080/reflect` and times it inside |
 | `stop`, `resume`, `delete` | `sandbox.stop()` / `resume()` and poll; `delete_sandbox(id)` |
 
-[`tools/measure_aca.py`](tools/measure_aca.py) repeats the 2026-10-09 protocol: `agent` mode runs create → answer → answer → stop → resume → answer → answer → delete per run and fails if conversation-history lengths do not keep growing; `create` mode times each configuration (`builtin`, `image`, `vnet`, `port`, `vnetvolume`, `full`) and records whether guest uptime after resume exceeds its pre-stop value. Uptime alone does not prove process-memory continuity; the retained `process_survived` field is a legacy name for that observation.
+[`tools/measure_aca.py`](tools/measure_aca.py) repeats the 2026-10-09 protocol: `agent` mode runs create → answer → answer → stop → resume → answer → answer → delete per run and fails if conversation-history lengths do not keep growing; `create` mode times each configuration (`builtin`, `image`, `vnet`, `port`, `vnetvolume`, `full`) and records whether guest uptime after resume exceeds its pre-stop value. Uptime alone does not prove process-memory continuity; the retained `process_survived` field is a legacy name for that observation. `scale` mode creates the sandboxes of each `--scale` level at the same time with the full specification; each asks D's and E's two concurrency questions and counts as answered when its second answer names its own word, and every sandbox is deleted before the next level (`a-2026-10-18-scale`).
 
-[`tools/measure_responses.py`](tools/measure_responses.py) (B and D) POSTs `{"input": …}` to `AGENT_RESPONSES_URL` with an Azure CLI token for `https://ai.azure.com` and adds `previous_response_id` for follow-ups. Token acquisition is outside the request timer; it refreshes before each concurrency level and recovery. With `--observe`, it accepts only one new Ready Kata pod as a candidate; ambiguity or a failed pod read is a failure, not a placement result. Run this observation in a quiet project namespace. `--recovery` deletes the one newly observed Kata pod, waits for deletion to finish, then follows up using that session's response ID. Exit 0 requires every requested cold, warm, concurrency and recovery check to pass; skipped recovery, deletion failure and forgotten state return exit 1.
+[`tools/measure_responses.py`](tools/measure_responses.py) (B and D) POSTs `{"input": …}` to `AGENT_RESPONSES_URL` with an Azure CLI token for `https://ai.azure.com` and adds `previous_response_id` for follow-ups. Token acquisition is outside the request timer; it refreshes before each concurrency level and recovery. With `--observe`, it accepts only one new Ready Kata pod as a candidate; ambiguity or a failed pod read is a failure, not a placement result. Run this observation in a quiet project namespace. `--recovery` deletes the one newly observed Kata pod, waits for deletion to finish, then follows up using that session's response ID. Exit 0 requires every requested cold, warm, concurrency and recovery check to pass; skipped recovery, deletion failure and forgotten state return exit 1. With `RESPONSES_AUTH_HEADER` (`Header-Name: value`, for example an API Management key) it sends that header instead of the token, as in `b-2026-10-18-perf`; the value is never printed or written.
 
 [`tools/check_isolation.py`](tools/check_isolation.py) (C and D) reads `kubectl get pods` and `kubectl get nodes`, requires `runtimeClassName: kata-vm-isolation` and phase Running, and with `--exec-uname` compares `uname -r` inside the pod with the node's `kernelVersion`.
 
@@ -62,13 +63,15 @@ A's cold is `create_total_s + first.guest_s` and resume-to-answer is `resume_tot
 
 [`tools/measure_code_interpreter.py`](tools/measure_code_interpreter.py) (E) runs the 11 steps of `e-2026-10-15-latest` against E2B's official `code-interpreter-v1` template with `e2b-code-interpreter` 2.11.0 and fails if any step fails or a sandbox is left.
 
-[`tools/measure_sessions.py`](tools/measure_sessions.py) (B) runs the explicit session lifecycle from [Manage hosted agent sessions](https://learn.microsoft.com/azure/foundry/agents/how-to/manage-hosted-sessions): create a session pinned to one agent version, write a file into it, answer twice, `:stop` until `idle`, answer on the same `agent_session_id`, read the file back, answer once more, delete. It authenticates with an Azure CLI token for `https://ai.azure.com` or with the header in `SESSIONS_AUTH_HEADER`, records every HTTP attempt including retries, and writes a private record plus a public one without session IDs or the endpoint. Exit 0 needs every run complete, the file back unchanged, the question count growing and every session it created deleted; the 2026-10-15 run meets all four.
+[`tools/measure_sessions.py`](tools/measure_sessions.py) (B and D) runs the explicit session lifecycle from [Manage hosted agent sessions](https://learn.microsoft.com/azure/foundry/agents/how-to/manage-hosted-sessions): create a session pinned to one agent version, write a file into it, answer twice, `:stop` until `idle`, answer on the same `agent_session_id`, read the file back, answer once more, delete. It authenticates with an Azure CLI token for `https://ai.azure.com` or with the header in `SESSIONS_AUTH_HEADER`, records every HTTP attempt including retries, and writes a private record plus a public one without session IDs or the endpoint. Exit 0 needs every run complete, the file back unchanged, the question count growing and every session it created deleted; the 2026-10-15 run meets all four. `--resume-after idle` replaces the stop with `--idle-wait` seconds without any request to the session and one status read, and exit 0 then also needs that status to be `idle` or `stopped` (`b-2026-10-18-idle`); `--path D` labels a BYO-AKS run (`d-2026-10-18-sessions`).
+
+[`tools/measure_c.py`](tools/measure_c.py) (C) copies the spec of the workshop's `agent-host` Sandbox under new names with the label `app=agent-host-measure`, so the workshop's own Sandbox and LoadBalancer are not touched. It times `kubectl apply` until the Sandbox and its pod are Ready, asks through `kubectl exec` inside the pod (the in-guest request A uses), and with the Blob PVC deletes the pod and runs a suspend/resume cycle; `--scale` applies N Sandboxes without the volume at once. Exit 0 needs every run's conversation to keep growing, every at-once Sandbox to name its own word and every test Sandbox deleted (`c-2026-10-18-perf`).
 
 The workshop scripts (`module-01/setup.sh`, `module-03/prepare-agent-sandbox.sh`, `module-04/sandbox-deploy.sh`) are used unchanged at `905f2c2`; this repository does not copy them.
 
 ## Measured Runs
 
-All runs used Azure resources in East US 2. The client was a Windows workstation, except `b-2026-10-15-sessions` (a Windows VM in Japan East, from WSL Ubuntu) and E, whose tools ran on the E2B host VM (host a on 2026-10-15, host c on 2026-10-17). The A/B/C record names Azure CLI 2.88.0 and azd 1.34.1; A's SDK record also names Python 3.13. Raw consoles and IDs stay in the author's private folders; [`tools/export_evidence.py`](tools/export_evidence.py) projected them into [`evidence/runs/`](evidence/runs/), recording the SHA-256 of every private source, and replaced node, pod and namespace names with neutral labels.
+All runs used Azure resources in East US 2. The client was a Windows workstation, except `b-2026-10-15-sessions` and the 2026-10-18 runs (a Windows VM in Japan East, from WSL Ubuntu) and E, whose tools ran on the E2B host VM (host a on 2026-10-15, host c on 2026-10-17). The A/B/C record names Azure CLI 2.88.0 and azd 1.34.1; A's SDK record also names Python 3.13. Raw consoles and IDs stay in the author's private folders; [`tools/export_evidence.py`](tools/export_evidence.py) projected them into [`evidence/runs/`](evidence/runs/), recording the SHA-256 of every private source, and replaced node, pod and namespace names with neutral labels. The 2026-10-18 records were projected the same way by a private script whose SHA-256 each record lists.
 
 Runs are grouped A–E, then by date from oldest to newest within each path, matching the README tables.
 
@@ -195,6 +198,30 @@ Both mounts listed the existing state files, and the sandbox stayed Running.
 
 **Boundary.** Two runs. Useful only when the first answer does not need the saved state: the agent starts with an empty state directory until the mount completes.
 
+### a-2026-10-18-scale: 4 and 8 agent sandboxes at once
+
+**Question.** Do 4, and then 8, agent sandboxes created at the same time with the full specification all start and answer, and how long does creation take under that load?
+
+**Input.** [`tools/measure_aca.py`](tools/measure_aca.py) `scale --scale 4,8` against the sandbox group and disk image of `a-2026-10-09-agent` ([`evidence/runs/a-aca-2026-10-18/scale.json`](evidence/runs/a-aca-2026-10-18/scale.json)). Each sandbox was asked "Remember SCALE-<k>. Reply only OK." and then "What did I ask you to remember? Word only.", the concurrency questions of D and E, and was then deleted.
+
+**Varied and fixed.** Only the number of sandboxes created at once: 4, then 8, 20 s apart. The specification (custom image, VNet, private Blob volume, port; 1 vCPU, 2 GiB) was that of `a-2026-10-09-agent`; the client was a Windows VM in Japan East (WSL Ubuntu), and the answers were timed inside each sandbox.
+
+**Result.**
+
+<!-- BEGIN GENERATED: a-scale -->
+| At once | Answered | Create → Running, s | Read turn inside the sandbox, s | All sessions, s |
+|---:|---|---:|---:|---:|
+| 4 | 4/4 | 15.66–24.55 | 0.93–1.11 | 32.9 |
+| 8 | 8/8 | 15.49–24.25 | 1.01–1.74 | 33.91 |
+
+Every sandbox's second answer was its own `SCALE-<k>`; `vmm_type` `cloudhypervisor` for all; every sandbox was deleted and none was left. All sessions: from the first create call until the last sandbox was deleted.
+<!-- END GENERATED: a-scale -->
+
+**Boundary.**
+- One run per level from one client. 8 sandboxes are 8 active cores, far below the default quota of 500, so this does not probe the limit.
+- Create times are SDK wall time on a client in Japan East; the 2026-10-09 runs came from a workstation in China.
+- Each sandbox wrote its own small state file (named after the sandbox) to the shared Blob container, as earlier A runs did; those files were left there.
+
 ### b-2026-09-27: Foundry hosted agent, deploy and two routes to the model
 
 **Question.** How long does B take from `azd` to an answering agent, and how fast are a new session and its follow-ups?
@@ -220,7 +247,7 @@ Both mounts listed the existing state files, and the sandbox stayed Running.
 **Boundary.**
 - One run, two follow-up samples per route: not enough to call gateway and direct different.
 - The direct route ran without the Foundry native AI gateway, because that portal step could not be automated.
-- Resume after idle and session loss were not exercised here; resume after an explicit stop is in `b-2026-10-15-sessions`.
+- Resume after idle and session loss were not exercised here; resume after an explicit stop is in `b-2026-10-15-sessions`, and the turn after an idle wait in `b-2026-10-18-idle`.
 
 ### b-2026-10-15-sessions: Foundry hosted agent, explicit session lifecycle, 3 runs
 
@@ -249,8 +276,98 @@ The service recorded <!--v:b.sess.server.range-->1–4<!--/v--> s of generation 
 
 **Boundary.**
 - Three runs from one client: the client times include a Japan East → East US 2 round trip and the gateway, so they are not comparable with the 2026-09-27 run from China.
-- Resume was measured after an explicit `:stop`, not after the idle timeout. There is no memory snapshot: the agent process starts again, and only `$HOME`, `/files` and the conversation stored by the platform carry over.
-- One session at a time; no concurrency and no session loss.
+- Resume was measured after an explicit `:stop`, not after the idle timeout (that case is `b-2026-10-18-idle`). There is no memory snapshot: the agent process starts again, and only `$HOME`, `/files` and the conversation stored by the platform carry over.
+- One session at a time; concurrency is in `b-2026-10-18-perf`; no session loss.
+
+### b-2026-10-18-perf: Foundry hosted agent, D's protocol: new sessions, follow-ups, 4 and 8 at once
+
+**Question.** On B, how fast is a new session started by a single request, how fast are follow-ups, and do 4 and 8 new sessions at once all answer?
+
+**Input.** [`tools/measure_responses.py`](tools/measure_responses.py) `--cold 5 --warm-turns 3 --scale 4,8`, the protocol of `d-2026-09-29-perf`, against the module-02 agent's Responses endpoint through the gateway of `b-2026-10-15-sessions` ([`evidence/runs/b-hosted-agent-2026-10-18/perf.json`](evidence/runs/b-hosted-agent-2026-10-18/perf.json)). The exact inputs:
+
+<!-- BEGIN GENERATED: b-perf-input -->
+> Request: POST <gateway>/agents/<agent>/endpoint/protocols/openai/responses {"input": <input>} with previous_response_id for follow-ups; an API Management subscription key header (RESPONSES_AUTH_HEADER) instead of an Entra token; nothing to acquire inside or outside the timed requests.
+> Agent: `maf-agent` version 2 (0.5 vCPU, 1Gi, `MODEL_ROUTING=direct`, `gpt-5.4-mini`); no version pinned in the requests; the endpoint's only rule sends 100% to @latest, which read back as version 2 on 2026-10-18.
+> New sessions: "Reply with exactly COLD-{i}" (n = 1–5)
+> One session: "Remember the code word LANTERN-7. Reply only OK.", then "What is the code word? Reply with the word only.", then "Reply with exactly WARM-{i}" (n = 1, 2)
+> At once, per session: "Remember SCALE-{i}. Reply only OK.", then "What did I ask you to remember? Word only." (4, then 8 sessions)
+> Client: Windows VM in Japan East (WSL Ubuntu) calling the Foundry project in East US 2 through an Azure API Management gateway (the path of b-2026-10-15-sessions).
+<!-- END GENERATED: b-perf-input -->
+
+**Varied and fixed.** New sessions, then one session with follow-ups, then 4 and 8 sessions at once, 20 s apart. The agent version, gateway and client were fixed.
+
+**Result.**
+
+<!-- BEGIN GENERATED: b-perf -->
+New sessions:
+
+| Start (UTC) | Answer | New session → answer, s | First byte, s |
+|---|---|---:|---:|
+| 03:49:28 | COLD-1 | 11.48 | 11.48 |
+| 03:49:42 | COLD-2 | 11.03 | 11.03 |
+| 03:49:57 | COLD-3 | 11.57 | 11.57 |
+| 03:50:11 | COLD-4 | 10.98 | 10.98 |
+| 03:50:25 | COLD-5 | 11.0 | 11.0 |
+
+11.03 s median (10.98–11.57; n=5).
+
+Follow-ups in one session:
+
+| Turn | Answer | Client wall, s |
+|---|---|---:|
+| 1 (new session) | OK | 11.05 |
+| 2 | LANTERN-7 | 3.94 |
+| 3 | WARM-1 | 4.08 |
+| 4 | WARM-2 | 3.88 |
+
+Follow-ups 2–4: 3.94 s median (3.88–4.08; n=3).
+
+At once:
+
+| At once | Answered | Read back its word | Write turn, s |
+|---:|---|---|---:|
+| 4 | 4/4 | 4/4 | 10.95–12.32 |
+| 8 | 8/8 | 8/8 | 10.02–12.63 |
+
+Every request returned HTTP 200; the tool sends each request once.
+<!-- END GENERATED: b-perf -->
+
+**Boundary.**
+- One campaign from one client; client times include the Japan East → East US 2 round trip and the gateway, so they compare with `b-2026-10-15-sessions`, not with D's laptop runs from China.
+- B shows no pods; where the platform ran the 8 sessions is not observable.
+- 8 sessions at once show that B answered them all without a refusal; they do not probe a limit.
+
+### b-2026-10-18-idle: Foundry hosted agent, the next turn after 17 minutes without requests
+
+**Question.** The default idle timeout is 15 minutes. What does the next turn cost when a session got no request for longer than that, and does the session keep its file and conversation?
+
+**Input.** [`tools/measure_sessions.py`](tools/measure_sessions.py) `--resume-after idle --idle-wait 1020` against version `2` through the gateway ([`evidence/runs/b-sessions-2026-10-18/idle.json`](evidence/runs/b-sessions-2026-10-18/idle.json)), 3 runs: create a session, write a marker file, ask "Where is Bangkok? Answer in one short sentence." and then "How many questions have I asked before this one? Number only.", send nothing to the session for 1020 s, read its status once, ask the second question twice more, read the marker back, delete the session. The control ([`idle-control.json`](evidence/runs/b-sessions-2026-10-18/idle-control.json)) is the same with `--idle-wait 300` and started after the first set had finished.
+
+**Varied and fixed.** Only the wait: 1020 s, past the 900 s default, or 300 s, below it. The agent version (no `idle_timeout_seconds` of its own, so the default applies), questions, gateway and client were fixed.
+
+**Result.**
+
+<!-- BEGIN GENERATED: b-idle -->
+Seconds, client wall time; the service time is the response's `completed_at` minus `created_at` (whole seconds); the last column is the agent's replies in order.
+
+| Wait, s | Run | Status after the wait | Follow-up before the wait | Next turn | Service time of that turn | Turn after that | File kept | Answers |
+|---:|---|---|---:|---:|---:|---:|---|---|
+| 1021.51 | 1 | `active` | 4.72 | 12.67 | 2 | 3.88 | yes | Bangkok is the capital city of Thailand in Southeast Asia. / 2 / 3 / 4 |
+| 1021.48 | 2 | `idle` | 3.81 | 12.71 | 2 | 5.42 | yes | Bangkok is the capital city of Thailand in Southeast Asia. / 2 / 3 / 4 |
+| 1021.22 | 3 | `idle` | 3.63 | 12.12 | 2 | 3.99 | yes | Bangkok is the capital city of Thailand in Southeast Asia. / 2 / 3 / 4 |
+| **1021.48** | **median** |  | **3.81** | **12.67** | **2** | **3.99** |  |  |
+| 301.75 | 1 | `active` | 3.7 | 5.76 | 3 | 4.16 | yes | Bangkok is the capital city of Thailand in Southeast Asia. / 2 / 3 / 4 |
+| 301.45 | 2 | `active` | 3.85 | 5.16 | 2 | 4.4 | yes | Bangkok is the capital city of Thailand in Southeast Asia. / 2 / 3 / 4 |
+| 301.47 | 3 | `active` | 4.21 | 4.43 | 2 | 3.89 | yes | Bangkok is the capital city of Thailand in Southeast Asia. / 2 / 3 / 4 |
+| **301.47** | **median** |  | **3.85** | **5.16** | **2** | **4.16** |  |  |
+<!-- END GENERATED: b-idle -->
+
+The status after the wait is in the third column. It was read once, so it does not show when or whether the platform released the compute. After about 5 minutes the next turn took <!--v:b.idle5.next.median-->5.16<!--/v--> s median, somewhat longer than the follow-up before the wait (<!--v:b.idle5.warm.median-->3.85<!--/v--> s). After about 17 minutes it took <!--v:b.idle.next.median-->12.67<!--/v--> s, about as long as a resume after an explicit `:stop` (<!--v:b.sess.resume.median-->12.02<!--/v--> s in `b-2026-10-15-sessions`), and the service recorded at most <!--v:b.idle.next_server.max-->2<!--/v--> s of it as generation. So the extra time appears between 5 and 17 minutes. That is consistent with the platform releasing the session's compute after the 15-minute default, also in the 17-minute run whose status still read `active`. It is an inference from times; B does not expose its compute.
+
+**Boundary.**
+- Three runs per wait from one client; one status read per run, after the wait.
+- B does not expose its compute, so whether a session's compute was released can only be inferred from the time of the next turn.
+- `measure_sessions.py` exits 1 for a set in which any status still read `active` before the next turn: by design, exit 0 needs `idle` or `stopped` there.
 
 ### c-2026-09-27: AKS + agent-sandbox, isolation, pod loss, suspend and resume
 
@@ -276,9 +393,72 @@ The service recorded <!--v:b.sess.server.range-->1–4<!--/v--> s of generation 
 <!-- END GENERATED: c-run -->
 
 **Boundary.**
-- One run.
+- One run; three runs of each step, with the answers timed inside the pod, are in `c-2026-10-18-perf`.
 - The runc comparison pod ran on the Ubuntu system pool, so the two kernels differ by node as well as by runtime. The Kata kernel's `mshv` suffix, the runtime class and Learn's documented stack carry the conclusion.
 - Wake on request is not part of agent-sandbox; the resume was a manual patch.
+
+### c-2026-10-18-perf: AKS + agent-sandbox, cold start without and with the Blob PVC, pod loss, suspend/resume, 4 and 8 at once
+
+**Question.** How fast does a Sandbox start and answer without an external volume, and with the workshop's Blob PVC? What do pod loss and a suspend/resume cycle cost over three runs? How many Sandboxes fit at once?
+
+**Input.** [`tools/measure_c.py`](tools/measure_c.py) `--cold 3 --pvc 3 --scale 4,8` against the workshop's cluster ([`evidence/runs/c-aks-agent-sandbox-2026-10-18/perf.json`](evidence/runs/c-aks-agent-sandbox-2026-10-18/perf.json)). Every test Sandbox copies the spec of the workshop's `agent-host` Sandbox, and the answers are POSTed to `/reflect` inside the pod with `kubectl exec`:
+
+<!-- BEGIN GENERATED: c18-input -->
+> Cluster: the cluster of c-2026-09-27, started for this run; the workshop's own agent-host Sandbox kept running on the Kata node throughout; Kubernetes 1.35.8, Free tier; system pool 1 x standard_d4ads_v7 Ubuntu; Kata pool Standard_D4s_v3 AzureLinux KataVmIsolation, autoscale 1-10, 1 node at start; agent-sandbox v0.5.2 (controller image read back 2026-10-18).
+> Each test Sandbox copies the spec of the workshop's `agent-host` Sandbox in namespace `agent` under a new name and the label `app=agent-host-measure`: image `<registry>.azurecr.io/agent-host:latest`, runtime class `kata-vm-isolation`, requests 500m CPU and 512Mi, limits 2000m CPU and 2Gi. `AGENT_ID` comes from the pod name, so each copy keeps its conversation in its own state file.
+> Request: POST http://127.0.0.1:8080/reflect {"query": <input>}, sent with kubectl exec python3 inside the agent container.
+> First answer: "Where is Bangkok? Answer in one short sentence."
+> Every later turn: "How many questions have I asked before this one? Number only."; with the PVC once more after the pod was deleted and once after suspend/resume
+> At once, per Sandbox without the volume: "Remember SCALE-{k}. Reply only OK.", then "What did I ask you to remember? Word only." (4, then 8 Sandboxes)
+> Client: Windows VM in Japan East (WSL Ubuntu); kubectl against the cluster in East US 2; answers timed inside the pod with kubectl exec.
+<!-- END GENERATED: c18-input -->
+
+**Varied and fixed.** With or without the Blob PVC (for the runs without it, the `persistentVolumeClaim` volume and its mount are removed from the copy), and 4 or 8 Sandboxes at once, 20 s between runs. The cluster, image, agent and client were fixed.
+
+**Result.** Cold start and follow-up:
+
+<!-- BEGIN GENERATED: c18-runs -->
+| Sandbox | Volume | `kubectl apply` → Ready, s | First answer, s | Cold total, s | Follow-up, s | Conversation length |
+|---|---|---:|---:|---:|---:|---|
+| cold-1 | none | 18.9 | 8.44 | 27.34 | 1.08 | 1, 2 |
+| cold-2 | none | 15.32 | 8.5 | 23.82 | 1.0 | 1, 2 |
+| cold-3 | none | 16.45 | 7.82 | 24.27 | 1.03 | 1, 2 |
+| pvc-1 | Blob PVC | 16.81 | 7.38 | 24.19 | 36.73 | 1, 2, 3, 4 |
+| pvc-2 | Blob PVC | 16.26 | 10.42 | 26.68 | 1.78 | 1, 2, 3, 4 |
+| pvc-3 | Blob PVC | 16.46 | 7.58 | 24.04 | 1.22 | 1, 2, 3, 4 |
+
+Without the volume: apply → Ready 16.45 s median (15.32–18.9; n=3), first answer 8.44 s median (7.82–8.5; n=3), cold total 24.27 s median (23.82–27.34; n=3). With the Blob PVC: apply → Ready 16.46 s median (16.26–16.81; n=3), first answer 7.58 s median (7.38–10.42; n=3), cold total 24.19 s median (24.04–26.68; n=3). Follow-ups with the PVC: 36.73, 1.78, 1.22 s (n=3); the record does not show where the slow one spent its time. Answers are timed inside the pod; the `kubectl exec` round trip around each added 2.53–3.21 s on the client and is excluded.
+<!-- END GENERATED: c18-runs -->
+
+Pod loss and suspend/resume, with the Blob PVC:
+
+<!-- BEGIN GENERATED: c18-pvc -->
+| Sandbox | Pod deleted → Ready, s | Answer, s | Suspended → pod gone, s | Running → Ready, s | Answer, s | Resume → answer, s |
+|---|---:|---:|---:|---:|---:|---:|
+| pvc-1 | 25.24 | 7.72 | 9.24 | 15.87 | 7.47 | 23.34 |
+| pvc-2 | 24.79 | 7.66 | 9.1 | 15.93 | 6.52 | 22.45 |
+| pvc-3 | 23.25 | 7.11 | 9.45 | 17.28 | 6.95 | 24.23 |
+| **median** | **24.79** |  | **9.24** | **15.93** |  | **23.34** |
+
+While suspended, the Sandbox's Ready condition read `False` (`SandboxSuspended`) in every run. The conversation length kept growing after the pod was deleted and after suspend/resume (last column of the table above), so the state came back from the Blob PVC each time. Resume → answer is the Running patch until Ready plus the answer inside the pod.
+<!-- END GENERATED: c18-pvc -->
+
+At once, without the volume:
+
+<!-- BEGIN GENERATED: c18-scale -->
+| At once | Answered | Apply → Ready, s | Sandboxes per Kata node | All Sandboxes, s |
+|---:|---|---:|---|---:|
+| 4 | 4/4 | 18.32–19.96 | node-1: 4 | 42.15 |
+| 8 | 8/8 | 18.52–141.79 | node-1: 6, node-2: 2 | 159.28 |
+
+The run started with 1 Kata node, which also ran the workshop's own Sandbox. With 8 at once, 6 test Sandboxes fit there (each requests 500m CPU); the other 2 ran on a node the cluster autoscaler added during the run and were Ready after 141.55–141.79 s. Kata nodes at the end: 2. Every Sandbox answered with its own `SCALE-<k>` and was deleted.
+<!-- END GENERATED: c18-scale -->
+
+**Boundary.**
+- Three runs per variant and one per concurrency level, from one client.
+- `c-2026-09-27` timed the answers at the LoadBalancer, and its apply was the first on that cluster; these runs time the answers inside the pod with the image already on the node, so the two sets differ in clock and in cache.
+- The Blob PVC was already bound; mounting it added nothing measurable at apply. Binding a new PVC was not measured.
+- Each copy wrote its own state file (named after its pod) to the shared Blob container; the files of the three PVC runs were left there, as were those of earlier runs.
 
 ### d-2026-09-29-placement: where a BYO-AKS session runs
 
@@ -388,6 +568,38 @@ When the refusals began, 12 session pods were alive on 3 `Standard_D4s_v5` nodes
 <!-- END GENERATED: d-recovery -->
 
 **Boundary.** One deletion. The follow-up went to a different live session than the deleted one. It shows that the pool kept serving and that other session retained `LANTERN-7`; it does **not** establish continuity of the deleted session.
+
+### d-2026-10-18-sessions: BYO-AKS, explicit session lifecycle, 3 runs
+
+**Question.** Do the session API's stop and resume work on BYO-AKS, what do they cost, and does a session keep its file and conversation across them?
+
+**Input.** [`tools/measure_sessions.py`](tools/measure_sessions.py) `--path D` against version `3` of the private-preview sample agent on its project endpoint, authenticated with the client VM's managed identity ([`evidence/runs/d-byoaks-2026-10-18/sessions.json`](evidence/runs/d-byoaks-2026-10-18/sessions.json)). The steps and questions are those of `b-2026-10-15-sessions`: "Where is Bangkok? Answer in one short sentence.", then "How many questions have I asked before this one? Number only." for every later turn, with a marker file written before `:stop` and read back after the resume turn.
+
+**Varied and fixed.** Nothing varied between the three runs. The Kata pool had two `Standard_D4s_v5` nodes during the runs (see the boundary).
+
+**Result.**
+
+<!-- BEGIN GENERATED: d-sessions -->
+Seconds, client wall time; the last column is the agent's replies in order.
+
+| Run | Create → active | First answer | Follow-up | Stop → idle | Answer after stop | Next answer | File kept | Answers |
+|---|---:|---:|---:|---:|---:|---:|---|---|
+| 1 | 11.51 | 11.01 | 10.05 | 23.55 | 19.78 | 10.05 | yes | Bangkok is the capital city of Thailand in Southeast Asia. / 2 / 3 / 4 |
+| 2 | 9.18 | 10.71 | 11.05 | 19.54 | 22.4 | 10.95 | yes | Bangkok is the capital city of Thailand in Southeast Asia. / 2 / 3 / 4 |
+| 3 | 9.32 | 11.39 | 10.66 | 22.72 | 19.14 | 10.71 | yes | Bangkok is the capital city of Thailand in Southeast Asia. / 2 / 3 / 4 |
+| **median** | **9.32** | **11.01** | **10.66** | **22.72** | **19.78** | **10.71** |  |  |
+
+35 HTTP attempts: 200 ×23, 201 ×6, 204 ×6; none retried.
+
+Session pods during the three runs: 6 new pods, 2 per session, each Running 3–4 s after it appeared (pod age at the change). Both pods of a session ended (Terminating, then Completed); their ages fit `:stop` ending the first and the delete ending the second. `kubectl get pods -w` records order and ages, not timestamps.
+<!-- END GENERATED: d-sessions -->
+
+The service recorded <!--v:d.sess.server.range-->1–3<!--/v--> s of generation per turn; the rest of each client time is the network path and the endpoint, and for the turn after a stop also starting a new session pod.
+
+**Boundary.**
+- Three runs from one client, which called the project endpoint in East US 2 directly from Japan East.
+- With the pool at one node, every session create was refused with `429 aks_quota_exceeded`: session deployments from 2026-09-29, back when the cluster started, held the node's CPU requests. We added a second node for these runs and removed it afterwards; the old sessions were left in place.
+- Private preview: the session API's behaviour on BYO-AKS may change.
 
 ### e-2026-10-14-agent: Foundry Prompt Agent + E2B Firecracker sandbox on Azure VM, 3 runs
 
@@ -744,7 +956,7 @@ Each count is the free pages divided by the template's pages, rounded down: with
 
 ### Numbers you can recompute
 
-Every published metric above comes from [`evidence/measurements.json`](evidence/measurements.json), which [`tools/build_measurements.py`](tools/build_measurements.py) recomputes from `evidence/runs/` after checking each file's SHA-256 against [`evidence/runs/INDEX.json`](evidence/runs/INDEX.json). It also checks: A's cold equals create plus first answer and recover equals resume plus answer in every run; each D cold pod's create-to-Ready equals its Kubernetes timestamps and runs `kata-vm-isolation`; D's warm session and the different live session used after pod deletion both remembered `LANTERN-7`. Medians are reported only for odd samples; even samples show their values.
+Every published metric above comes from [`evidence/measurements.json`](evidence/measurements.json), which [`tools/build_measurements.py`](tools/build_measurements.py) recomputes from `evidence/runs/` after checking each file's SHA-256 against [`evidence/runs/INDEX.json`](evidence/runs/INDEX.json). It also checks: A's cold equals create plus first answer and recover equals resume plus answer in every run; each D cold pod's create-to-Ready equals its Kubernetes timestamps and runs `kata-vm-isolation`; D's warm session and the different live session used after pod deletion both remembered `LANTERN-7`. For the 2026-10-18 runs: C's cold equals apply → Ready plus the first answer and its resume-to-answer equals Ready plus the answer in every run; B's and D's session runs must keep their file and question count; every at-once session's remembered flag must match its answer, and A and C must leave nothing behind. Medians are reported only for odd samples; even samples show their values.
 
 Duration fields and published samples must be finite, non-negative numbers, not booleans or numeric strings. An optional timing recorded as null remains unmeasured and cannot enter a published sample. C's resume milestones must satisfy Ready → LoadBalancer healthy → first answer; a paired D pod-ready duration cannot exceed its request wall time beyond timestamp rounding, and concurrency totals require every session record. JSON output rejects NaN and infinity.
 
@@ -754,16 +966,18 @@ These are unit, type, sample-count and timeline checks, not a universal maximum-
 
 **Deployment evidence boundary.** These are optional checks after deployment, not commands that replace creation of the application. The full parameterized README sequence has not been re-run in a fresh subscription. Original historical runs do not prove every modified deployment command. Module 1 foundation took <!--v:f.deploy.value-->3<!--/v--> minutes in the retained run.
 
-**Live measurement.** Return to `HOSTING_REPO`, load `.env`, and select the deployed B or D endpoint in `AGENT_RESPONSES_URL`; for E, export `E2B_API_KEY` as in README step 7. Run only the measurement for that path. The D recovery command deletes a session pod; the A measurement stops and deletes the sandboxes it creates; the E measurements create and delete their own agent version, conversations and sandboxes, and `perf` starts 8 sessions at once. Obtain explicit approval for those lifecycle operations before running them.
+**Live measurement.** Return to `HOSTING_REPO`, load `.env`, and select the deployed B or D endpoint in `AGENT_RESPONSES_URL`; for E, export `E2B_API_KEY` as in README step 7. Run only the measurement for that path. The D recovery command deletes a session pod; the A measurement stops and deletes the sandboxes it creates; the E measurements create and delete their own agent version, conversations and sandboxes, and `perf` starts 8 sessions at once; `measure_c.py` creates and deletes its own Sandboxes next to the workshop's, and 8 at once can make the cluster autoscaler add a Kata node. Obtain explicit approval for those lifecycle operations before running them.
 
 ```bash
 cd "$HOSTING_REPO"
 set -a && . ./.env && set +a
 python tools/measure_aca.py agent --runs 3
+python tools/measure_aca.py scale --scale 4,8
 python tools/measure_responses.py --cold 3 --warm-turns 3
 python tools/measure_responses.py --cold 3 --warm-turns 3 --scale 4,8 --recovery --observe
 python tools/measure_e2b.py agent --runs 3
 python tools/measure_e2b.py perf --cold 5 --scale 4,8 --recovery
+python tools/measure_c.py --cold 3 --pvc 3 --scale 4,8
 ```
 
 Exit 0 requires every requested phase to pass; full-pool refusals are saved but still exit 1. The different historical workloads and clocks do not make this a product ranking.
@@ -808,7 +1022,7 @@ On Windows, activate with `.venv\Scripts\activate` instead of `. .venv/bin/activ
 
 CI runs the same on Ubuntu with Python 3.12 ([workflow](https://github.com/xinyuwei-david/Azure-Agent-Sandbox-Hosting/blob/main/.github/workflows/docs-ci.yml)).
 
-The live checks need Azure and the resources from the README: `tools/aca_sandbox.py`, `tools/measure_aca.py`, `tools/measure_responses.py`, `tools/measure_e2b.py`, `tools/e2b_agent.py` and `tools/check_isolation.py` without `--pods-json`.
+The live checks need Azure and the resources from the README: `tools/aca_sandbox.py`, `tools/measure_aca.py`, `tools/measure_responses.py`, `tools/measure_sessions.py`, `tools/measure_c.py`, `tools/measure_e2b.py`, `tools/e2b_agent.py` and `tools/check_isolation.py` without `--pods-json`.
 
 Not tested here: the tools against a fresh subscription end to end after this repository was assembled (they are the run scripts parameterised with settings; `--help` and the offline logic are tested), regions other than East US 2, and Azure Cloud Shell as the operator shell.
 
@@ -816,12 +1030,12 @@ Not tested here: the tools against a fresh subscription end to end after this re
 
 **Limits.**
 
-- `LOCAL_MEASUREMENT`: A full-agent latency has n=3. B is one end-to-end run plus three session-API runs, and C is one end-to-end run. D is one benchmark campaign: cached-image cold n=5, warm n=3, and one placement and one recovery observation. Repeat with the live measurement commands in this page before relying on a number.
-- `LOCAL_MEASUREMENT`: A and C use the workshop reflection agent; B uses its Agent Framework agent with ResponsesHostServer; D uses the private-preview sample. B's 2026-09-27 run and D include the Foundry endpoint and a client in China (round trip <!--v:d.client_rtt.range-->320–800<!--/v--> ms); B's 2026-10-15 runs add a client in Japan East and an API Management gateway; A's answers were timed inside the sandbox; C's at its LoadBalancer. The rows compare field implementations, not identical containers or network paths.
+- `LOCAL_MEASUREMENT`: A full-agent latency has n=3, plus one run each of 4 and 8 sandboxes at once. B is one end-to-end run, three session-API runs, a D-protocol campaign (cold n=5, warm n=3, 4 and 8 at once) and three runs after each of two idle waits. C is one end-to-end run plus three runs without and three with the Blob PVC (pod loss and suspend/resume included) and one run each of 4 and 8 at once. D is one benchmark campaign: cached-image cold n=5, warm n=3, and one placement and one recovery observation, plus three session-API runs. Repeat with the live measurement commands in this page before relying on a number.
+- `LOCAL_MEASUREMENT`: A and C use the workshop reflection agent; B uses its Agent Framework agent with ResponsesHostServer; D uses the private-preview sample. B's 2026-09-27 run and D include the Foundry endpoint and a client in China (round trip <!--v:d.client_rtt.range-->320–800<!--/v--> ms); B's 2026-10-15 and 2026-10-18 runs add a client in Japan East and an API Management gateway; D's 2026-10-18 runs called the endpoint directly from Japan East; A's answers were timed inside the sandbox; C's at its LoadBalancer on 2026-09-27 and inside the pod on 2026-10-18. The rows compare field implementations, not identical containers or network paths.
 - `LOCAL_MEASUREMENT`: in A, the private Blob volume put create at <!--v:a.attr.vnetvolume.range-->15.79–25.12<!--/v--> s; image, VNet and port alone stayed at <!--v:a.attr.small.range-->1.6–2.7<!--/v--> s.
 - `LOCAL_MEASUREMENT`: the oldest D session pod was still Running at least <!--v:d.idle.value-->87<!--/v--> minutes after it was created. This is pod age, not idle duration: no last-request timestamp was retained. It establishes neither a configured idle timeout nor a continuously idle interval.
 - `LOCAL_MEASUREMENT`: D's capacity was at most <!--v:d.capacity.per_node-->5<!--/v--> sessions per `Standard_D4s_v5` node with the sample's 500m CPU / 1 Gi request plus 600 Mi Kata overhead; a node that also hosts system pods fits fewer.
-- `NOT_MEASURED`: B's resume after the idle timeout (resume after an explicit stop is in `b-2026-10-15-sessions`) and session loss; A's host loss; D's behaviour once the service ends a session; the Foundry-governed agent calling an ACA sandbox per task; latency under concurrency with free capacity; third-party sandboxes other than E2B; E2B Bring Your Own Cloud and private cloud; the official E2B Azure Terraform module, including its scale-set replacement of an unhealthy instance from a fresh disk; the loss of a whole E2B VM or its disk.
+- `NOT_MEASURED`: when B's platform reclaims an idle session (`b-2026-10-18-idle` read the status once, after the wait) and B's session loss; A's host loss; D's behaviour once the service ends a session; the Foundry-governed agent calling an ACA sandbox per task; D's latency under concurrency with free capacity; third-party sandboxes other than E2B; E2B Bring Your Own Cloud and private cloud; the official E2B Azure Terraform module, including its scale-set replacement of an unhealthy instance from a fresh disk; the loss of a whole E2B VM or its disk.
 - `SOURCE_FACT`: E2B Embed "is one machine, by design"; E2B's ways past one machine are private cloud (in development), Bring Your Own Cloud operated by E2B in your account, and E2B Cloud ([Embed](https://github.com/e2b-dev/runtime/blob/588e5b9500b0987bc5a700d91483b03f0ae7d2a2/embed/README.md#when-one-node-is-not-enough)). It answers over plain HTTP with no TLS of its own. The Azure Terraform install is a scale set of one with no persistent data volume: a replacement starts from a fresh disk and loses the templates you built, and stopping the stack gets the instance replaced about two minutes after `/health` stops answering ([Azure guide](https://github.com/e2b-dev/runtime/blob/588e5b9500b0987bc5a700d91483b03f0ae7d2a2/embed/terraform/azure/README.md#limitations)).
 - `SOURCE_FACT`: E2B's Compose guide sizes `HUGEPAGES` by "the sandboxes you will run at once" and states 256 pages for a 512 MiB `base` sandbox at full memory and about 90 idle ([requirements](https://github.com/e2b-dev/runtime/blob/588e5b9500b0987bc5a700d91483b03f0ae7d2a2/embed/compose/README.md#requirements)). In `e-2026-10-15-multi` each idle `base` sandbox reserved 256 pages at create, so the default pool held 7, not about 20.
 - `SOURCE_FACT`: ACA Sandboxes start "from prewarmed pools for near-instant availability" and resume "with sub-second restore times" ([overview](https://learn.microsoft.com/azure/container-apps/sandboxes-overview)). Selectable tiers (vCPU / GB): XS 0.25 / 0.5, S 0.5 / 1, M 1 / 2, L 2 / 4, XL 4 / 8. Idle auto-suspend is configurable; Memory preserves memory and disk, while Disk preserves disk only. The local 900 s setting is not a service-wide default.
@@ -829,7 +1043,7 @@ Not tested here: the tools against a fresh subscription end to end after this re
 - `SOURCE_FACT`: hosted agent [sandbox sizes](https://learn.microsoft.com/azure/foundry/agents/concepts/hosted-agents#sandbox-sizes) are 0.5 vCPU / 1 GiB, 1 vCPU / 2 GiB and 2 vCPU / 4 GiB; the values set on an agent version apply to each session, and no VM SKU is chosen. The workshop's module-02 uses 0.5 vCPU / 1 GiB.
 - `SOURCE_FACT`: AKS Pod Sandboxing is Azure Linux host + Microsoft Hyper-V + Cloud Hypervisor + Kata Containers; the node VM must be a generation 2 size that supports nested virtualization; each pod VM's memory follows the pod memory limit (512 Mi if unset) and fractional CPU limits round up to a whole vCPU ([pod sandboxing](https://learn.microsoft.com/azure/aks/use-pod-sandboxing)).
 - `SOURCE_FACT`: agent-sandbox v0.5.2 supports an absolute `shutdownTime`; underlying pods and services are deleted on expiry, and `shutdownPolicy` controls retention of the Sandbox object ([official API](https://github.com/kubernetes-sigs/agent-sandbox/blob/v0.5.2/docs/api.md)). This is scheduled expiry, not a request-idle timer. `operatingMode` still exposes explicit suspend/resume.
-- `NOT_VERIFIED`: no public official BYO-AKS idle policy, suspend support or exhaustive node-SKU list was verified in this review. Confirm preview requirements with the product group; the pod-age observation cannot establish those policies.
+- `NOT_VERIFIED`: no public official BYO-AKS idle policy or exhaustive node-SKU list was verified in this review; explicit `:stop` and resume through the session API worked in `d-2026-10-18-sessions`, an observation of this preview build, not a documented policy. Confirm preview requirements with the product group; the pod-age observation cannot establish those policies.
 - `SOURCE_FACT`: [ACA's official quota documentation](https://sandboxes.azure.com/docs/sandboxes/limits) measures concurrent active cores; stopped sandboxes do not consume this quota. This is not a fixed session-count limit.
 - `SOURCE_FACT`: [AKS Pod Sandboxing](https://learn.microsoft.com/azure/aks/concepts-pod-sandboxing) isolates compute, not the control plane, storage/data paths or cluster-admin actions. The isolation tool checks runtime configuration; requested kernel reads must succeed, and a version string is not hardware attestation.
 - `SOURCE_FACT`: the [fixed module-02 implementation](https://github.com/oxcp/ainotes/blob/905f2c2/agenthost/module-02/agent-src/main.py) makes `MODEL_ROUTING=direct` call the Foundry project endpoint. A project with a registered native AI Gateway may still forward those calls through APIM; the mode name alone does not prove a gateway bypass.
@@ -840,7 +1054,7 @@ Not tested here: the tools against a fresh subscription end to end after this re
 
 **Assets.**
 
-- [`tools/`](tools/): `aca_sandbox.py`, `measure_aca.py`, `measure_responses.py`, `measure_e2b.py`, `measure_code_interpreter.py`, `measure_sessions.py`, `e2b_agent.py`, `check_isolation.py` (live); `export_evidence.py` (author only), `build_measurements.py`, `render_docs.py`, `build_diagrams.py`, `validate_docs.py` (offline).
+- [`tools/`](tools/): `aca_sandbox.py`, `measure_aca.py`, `measure_responses.py`, `measure_e2b.py`, `measure_code_interpreter.py`, `measure_sessions.py`, `measure_c.py`, `e2b_agent.py`, `check_isolation.py` (live); `export_evidence.py` (author only), `build_measurements.py`, `render_docs.py`, `build_diagrams.py`, `validate_docs.py` (offline).
 - [`evidence/claims.json`](evidence/claims.json): the canonical A–E identities, statuses, ownership, boundaries, selection contract, letter mapping and run order; [`evidence/runs/`](evidence/runs/): the redacted run records with the SHA-256 of their private sources, and `INDEX.json`; [`evidence/measurements.json`](evidence/measurements.json): every published metric.
 - [`images/`](images/): the architecture figures, their source of truth `tools/build_diagrams.py`, the 8 Azure icons and [`SOURCES.json`](images/SOURCES.json).
 - [`config/.env.example`](config/.env.example): every setting; [`tests/`](tests/): the offline tests and their fixtures.

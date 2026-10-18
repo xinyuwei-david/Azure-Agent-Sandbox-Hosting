@@ -729,6 +729,170 @@ def build(runs: dict[str, dict], index: dict[str, str]) -> dict:
          "cached_through": built[0]["cached_steps"][1], "steps": built[0]["steps"]},
         "unchanged build_prod.py against host c with the three raised settings of host a; no change between attempts")
 
+    # A · 2026-10-18, 4 and 8 sandboxes at once with the full specification
+    asc = runs["a-aca-2026-10-18/scale.json"]
+    rid = asc["run_id"]
+    if asc["leftover_sandboxes"] != 0:
+        raise BuildError("A at once: a sandbox was left")
+    for lv in asc["levels"]:
+        n, ss = lv["sessions_at_once"], lv["sessions"]
+        if len(ss) != n or lv["answered"] != sum(s["remembered"] is True for s in ss):
+            raise BuildError(f"A {n} at once: counts differ from the session records")
+        if any(s["remembered"] != (f"SCALE-{s['slot']}" in s["turn2"]["response"]) or s["deleted"] is not True
+               for s in ss):
+            raise BuildError(f"A {n} at once: a remembered flag differs from its answer, or a sandbox was not deleted")
+        put(f"a.c{n}", rid, "LOCAL_MEASUREMENT",
+            {"n": n, "unit": "sessions", "answered": lv["answered"], "wall_s": lv["wall_s"],
+             "create_s": sorted(s["create_to_running_s"] for s in ss),
+             "read_s": sorted(s["turn2"]["guest_s"] for s in ss), "vmm": sorted({s["vmm_type"] for s in ss})},
+            f"{n} agent sandboxes created at once with the full specification: create until Running, and the read "
+            "turn timed inside each sandbox")
+
+    # B · 2026-10-18, D's protocol through an API Management gateway
+    bp = runs["b-hosted-agent-2026-10-18/perf.json"]
+    rid = bp["run_id"]
+    bcold, bwarm = bp["cold_turns"], bp["warm_turns"]
+    if len(bcold) != 5 or any(t["http"] != 200 or t["answer"] != f"COLD-{i + 1}" for i, t in enumerate(bcold)):
+        raise BuildError("B D-protocol cold: expected 5 answered new sessions, COLD-1 to COLD-5")
+    if (not bp["warm_remembered"] or len(bwarm) != 4 or bwarm[1]["answer"] != "LANTERN-7"
+            or any(t["http"] != 200 for t in bwarm)):
+        raise BuildError("B D-protocol warm: expected 4 answered turns that remember LANTERN-7")
+    put("b.d.cold", rid, "LOCAL_MEASUREMENT", stat([t["wall_s"] for t in bcold]),
+        "new session until the answer, one request through the gateway (D protocol)")
+    put("b.d.warm", rid, "LOCAL_MEASUREMENT", stat([t["wall_s"] for t in bwarm[1:]]),
+        "follow-up turns in the same session (D protocol)")
+    for lv in bp["scalability"]:
+        n, ss = lv["concurrency"], lv["sessions"]
+        if len(ss) != n or lv["answered"] != sum(s["turn1"]["http"] == 200 for s in ss):
+            raise BuildError(f"B {n} at once: counts differ from the session records")
+        if any(s["remembered"] != (s["turn2"] is not None and s["turn2"]["answer"] == f"SCALE-{s['i']}") for s in ss):
+            raise BuildError(f"B {n} at once: a remembered flag differs from its answer")
+        put(f"b.d.c{n}", rid, "LOCAL_MEASUREMENT",
+            {"n": n, "unit": "sessions", "answered": lv["answered"], "remembered": sum(s["remembered"] for s in ss),
+             "turn1_s": sorted(s["turn1"]["wall_s"] for s in ss)},
+            f"{n} new sessions at once through the gateway; each answered a write turn and a read turn")
+
+    # B · 2026-10-18, the next turn after 17 min without requests, and the same after 5 min as a control
+    for key, rel, label in (("b.idle", "b-sessions-2026-10-18/idle.json", "about 17 min"),
+                            ("b.idle5", "b-sessions-2026-10-18/idle-control.json", "about 5 min")):
+        doc = runs[rel]
+        rid, rr = doc["run_id"], doc["runs"]
+        if len(rr) != 3 or doc["resume_after"] != "idle":
+            raise BuildError(f"{rel}: expected 3 runs with --resume-after idle")
+        for r in rr:
+            if "error" in r or r.get("deleted") is not True or "stop" in r:
+                raise BuildError(f"{rel} run {r['run']}: recorded an error, sent a stop or kept its session")
+            if r["marker_after_resume"]["matches"] is not True or not count_grew(r):
+                raise BuildError(f"{rel} run {r['run']}: lost its file or its question count")
+        states = [r["idle"]["state_before_resume"] for r in rr]
+        put(f"{key}.waited", rid, "LOCAL_MEASUREMENT", stat([r["idle"]["waited_s"] for r in rr]),
+            f"no request to the session for {label}, then one status read")
+        put(f"{key}.state", rid, "LOCAL_MEASUREMENT",
+            {"n": len(rr), "unit": "runs", "states": states, "idle": sum(s in ("idle", "stopped") for s in states)},
+            "session status read after the wait, before the next turn")
+        put(f"{key}.warm", rid, "LOCAL_MEASUREMENT", stat([r["warm"]["total_s"] for r in rr]),
+            "follow-up turn before the wait, client wall time")
+        put(f"{key}.next", rid, "LOCAL_MEASUREMENT", stat([r["resume"]["total_s"] for r in rr]),
+            f"the next turn after {label} without requests, client wall time")
+        put(f"{key}.next_server", rid, "LOCAL_MEASUREMENT", stat([r["resume"]["server_s"] for r in rr]),
+            "that turn: completed_at minus created_at as recorded by the service (whole seconds)")
+        put(f"{key}.after", rid, "LOCAL_MEASUREMENT", stat([r["warm_after_resume"]["total_s"] for r in rr]),
+            "the turn after that")
+        put(f"{key}.state_kept", rid, "LOCAL_MEASUREMENT",
+            {"n": len(rr), "unit": "runs", "files": sum(r["marker_after_resume"]["matches"] is True for r in rr),
+             "conversation": sum(count_grew(r) for r in rr)},
+            "files: the file written before the wait read back unchanged; conversation: the question count kept growing")
+
+    # C · 2026-10-18, copies of the workshop Sandbox; answers timed inside the pod
+    c18 = runs["c-aks-agent-sandbox-2026-10-18/perf.json"]
+    rid = c18["run_id"]
+    cn, cpv = c18["cold"], c18["pvc"]
+    if len(cn) != 3 or len(cpv) != 3 or c18["leftover_sandboxes"] != 0:
+        raise BuildError("C 2026-10-18: expected 3 runs without and 3 with the PVC, and no Sandbox left")
+    for r in cn + cpv:
+        if "error" in r or r.get("deleted") is not True or r.get("history_grew") is not True or r["pvc"] != (r in cpv):
+            raise BuildError(f"C {r['sandbox']}: recorded an error, lost its history or was not deleted")
+        if abs(r["apply_to_ready_s"] + r["first"]["guest_s"] - r["cold_total_s"]) > 0.011:
+            raise BuildError(f"C {r['sandbox']}: cold_total_s is not apply to Ready + first answer")
+    for r in cpv:
+        if abs(r["resume_to_ready_s"] + r["after_resume"]["guest_s"] - r["resume_to_answer_s"]) > 0.011:
+            raise BuildError(f"C {r['sandbox']}: resume_to_answer_s is not resume to Ready + answer")
+        if r["suspended_condition"]["status"] != "False":
+            raise BuildError(f"C {r['sandbox']}: the Sandbox read Ready while suspended")
+    for prefix, rr, what in (("c.n", cn, "no volume"), ("c.p", cpv, "with the Blob PVC")):
+        put(f"{prefix}.apply_ready", rid, "LOCAL_MEASUREMENT", stat([r["apply_to_ready_s"] for r in rr]),
+            f"kubectl apply until the Sandbox and its pod are Ready, {what}")
+        put(f"{prefix}.first", rid, "LOCAL_MEASUREMENT", stat([r["first"]["guest_s"] for r in rr]),
+            f"first answer timed inside the pod, {what}")
+        put(f"{prefix}.cold", rid, "LOCAL_MEASUREMENT", stat([r["cold_total_s"] for r in rr]),
+            f"apply until Ready + first answer inside the pod, added per run, {what}")
+        put(f"{prefix}.warm", rid, "LOCAL_MEASUREMENT", stat([r["follow_up"]["guest_s"] for r in rr]),
+            f"follow-up answer timed inside the pod, {what}")
+    put("c.p.pod_lost", rid, "LOCAL_MEASUREMENT", stat([r["pod_delete_to_ready_s"] for r in cpv]),
+        "kubectl delete pod until a new pod of the same Sandbox is Ready")
+    put("c.p.suspend", rid, "LOCAL_MEASUREMENT", stat([r["suspend_to_pod_gone_s"] for r in cpv]),
+        "operatingMode Suspended until the pod is gone")
+    put("c.p.resume_ready", rid, "LOCAL_MEASUREMENT", stat([r["resume_to_ready_s"] for r in cpv]),
+        "operatingMode Running until a new pod is Ready")
+    put("c.p.resume_answer", rid, "LOCAL_MEASUREMENT", stat([r["resume_to_answer_s"] for r in cpv]),
+        "Running patch until Ready + the next answer inside the pod, added per run")
+    put("c.p.state_kept", rid, "LOCAL_MEASUREMENT", {"n": len(cpv), "unit": "runs", "count": len(cpv)},
+        "conversation length kept growing across pod loss and suspend/resume (state on the Blob PVC)")
+    start_nodes = {x["name"] for x in c18["kata_nodes_at_start"]}
+    for lv in c18["scale"]:
+        n, ss = lv["sessions_at_once"], lv["sessions"]
+        if len(ss) != n or lv["answered"] != sum(s.get("remembered") is True for s in ss) or lv["deleted"] != n:
+            raise BuildError(f"C {n} at once: counts differ from the session records, or a Sandbox was not deleted")
+        if any(s["remembered"] != (f"SCALE-{s['slot']}" in s["turn2"]["response"]) for s in ss):
+            raise BuildError(f"C {n} at once: a remembered flag differs from its answer")
+        put(f"c.c{n}", rid, "LOCAL_MEASUREMENT",
+            {"n": n, "unit": "sessions", "answered": lv["answered"], "wall_s": lv["wall_s"], "nodes": len(lv["nodes"]),
+             "on_new_nodes": sum(s["server"]["node"] not in start_nodes for s in ss),
+             "ready_s": sorted(s["apply_to_ready_s"] for s in ss)},
+            f"{n} Sandboxes without the volume applied at once on the Kata pool (cluster autoscaler 1 to 10 nodes)")
+
+    # D · 2026-10-18, explicit session lifecycle through the session API on your AKS
+    ds = runs["d-byoaks-2026-10-18/sessions.json"]
+    rid = ds["run_id"]
+    dr = ds["runs"]
+    if len(dr) != 3:
+        raise BuildError("D session run should have 3 runs")
+    for r in dr:
+        if "error" in r or r.get("deleted") is not True or r["stop"]["wait_stopped"]["state"] != "idle":
+            raise BuildError(f"D session run {r['run']}: recorded an error, did not stop to idle or kept its session")
+        if r["marker_after_resume"]["matches"] is not True or not count_grew(r):
+            raise BuildError(f"D session run {r['run']}: lost its file or its question count")
+    dcreate = [round(r["create"]["total_s"] + ((r["create"].get("wait_active") or {}).get("seconds") or 0), 3)
+               for r in dr]
+    put("d.sess.create", rid, "LOCAL_MEASUREMENT", stat(dcreate),
+        "POST .../endpoint/sessions until the session reads active, client wall time")
+    put("d.sess.first", rid, "LOCAL_MEASUREMENT", stat([r["first"]["total_s"] for r in dr]),
+        "first answer on the active session")
+    put("d.sess.warm", rid, "LOCAL_MEASUREMENT", stat([r["warm"]["total_s"] for r in dr]),
+        "follow-up answer on the same session")
+    put("d.sess.stop", rid, "LOCAL_MEASUREMENT",
+        stat([round(r["stop"]["total_s"] + r["stop"]["wait_stopped"]["seconds"], 3) for r in dr]),
+        "POST .../sessions/{id}:stop until the session reads idle")
+    put("d.sess.resume", rid, "LOCAL_MEASUREMENT", stat([r["resume"]["total_s"] for r in dr]),
+        "next answer on the stopped session")
+    put("d.sess.warm_after_resume", rid, "LOCAL_MEASUREMENT", stat([r["warm_after_resume"]["total_s"] for r in dr]),
+        "the answer after that")
+    put("d.sess.server", rid, "LOCAL_MEASUREMENT",
+        stat([r[k]["server_s"] for r in dr for k in ("first", "warm", "resume", "warm_after_resume")]),
+        "every turn: response completed_at minus created_at as recorded by the service (whole seconds)")
+    put("d.sess.state_kept", rid, "LOCAL_MEASUREMENT",
+        {"n": len(dr), "unit": "runs", "files": sum(r["marker_after_resume"]["matches"] is True for r in dr),
+         "conversation": sum(count_grew(r) for r in dr)},
+        "files: the file written before stop read back unchanged after resume; conversation: the question count "
+        "kept growing across stop and resume")
+    pods = ds["pods"]
+    if pods["pods_per_session"] != [2, 2, 2] or pods["new_pods_ended_completed"] != pods["new_pods"]:
+        raise BuildError("D session pods: expected two pods per session, every one ended")
+    put("d.sess.pods", rid, "LOCAL_MEASUREMENT",
+        {"n": pods["new_pods"], "unit": "pods", "per_session": 2, "running_after_s": pods["pending_to_running_age_s"],
+         "nodes": pods["nodes_of_new_pods"]},
+        "session pods that appeared during the three runs (kubectl get pods -w; order and ages, no timestamps)")
+
     return {"schema": 1, "built_from": dict(sorted(index.items())), "metrics": m}
 
 
