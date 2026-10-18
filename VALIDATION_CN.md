@@ -39,6 +39,8 @@ A 的回答在沙箱内计时，是因为 2026-09-27 那次从操作员地址访
 
 A 的冷启动为 `create_total_s + first.guest_s`，恢复到回答为 `resume_total_s + first_after_resume.guest_s`：采用分段相加，不是客户端连续端到端计时。C 的冷启动也采用分段相加。A 和 C 的恢复到回答均不含停止和空闲等待。
 
+README 的对比表只用就绪类计时：创建到就绪、恢复到就绪、pod 或沙箱丢失后重新就绪。回答类计时只保留在本页：回答耗时主要反映模型、agent 和网络链路；像 `"Where is Bangkok?"` 这样不需要执行代码的问题，也不能说明代码在沙箱里执行。
+
 ## 脚本实际执行了什么
 
 [`tools/aca_sandbox.py`](tools/aca_sandbox.py)（A），使用 `azure-containerapps-sandbox` 0.1.0b4：
@@ -109,7 +111,7 @@ workshop 的脚本（`module-01/setup.sh`、`module-03/prepare-agent-sandbox.sh`
 <!-- END GENERATED: a-setup -->
 
 **边界。**
-- 只有一次。24 s 的唤醒时间是单次观察，没有用在“恢复”那一行；那一行用的是 2026-10-09 三次显式恢复的数据。
+- 只有一次。24 s 的唤醒时间是单次观察，没有用在 README 的对比表里；对比表的“恢复到就绪”一行用的是 2026-10-18 不挂 Blob 卷的三次显式恢复。
 - 内存恢复后第一次对外调用用了 12.5 s，之后约 1 s；我们推测是 keep-alive 连接失效，但没有证实。
 - 唤醒测试临时开了一个匿名端口窗口，因为 IP 规则放不进操作员地址；测完已删除端口。
 

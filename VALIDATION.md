@@ -39,6 +39,8 @@ A's answers are timed inside the sandbox because the 2026-09-27 run could not re
 
 A's cold is `create_total_s + first.guest_s` and resume-to-answer is `resume_total_s + first_after_resume.guest_s`: component sums, not a single end-to-end client stopwatch. C's cold is also a component sum. For both A and C, stop and idle waiting are excluded from resume-to-answer.
 
+The README's comparison uses only the ready clocks: create → ready, resume → ready, and pod or sandbox lost → ready. The answer clocks stay on this page: an answer time mostly measures the model, the agent and the network path, and a question that needs no code, such as `"Where is Bangkok?"`, does not show that code ran in the sandbox.
+
 ## What the Scripts Run
 
 [`tools/aca_sandbox.py`](tools/aca_sandbox.py) (A), with `azure-containerapps-sandbox` 0.1.0b4:
@@ -109,7 +111,7 @@ Read inside the sandbox: vmm_type `cloudhypervisor`, kernel `6.12.8+`, 1 vCPU.
 <!-- END GENERATED: a-setup -->
 
 **Boundary.**
-- One run. The 24 s wake time was a single observation and is not used for the resume row; the 2026-10-09 explicit resume (three runs) is.
+- One run. The 24 s wake time was a single observation and is not used in the README's comparison; its resume row uses the three explicit resumes without the Blob volume of 2026-10-18.
 - The first outbound call after a memory resume took 12.5 s, then about 1 s; we read this as stale keep-alive connections, which we did not prove.
 - The wake test used a temporary anonymous port window because the IP rule could not admit the operator; the port was removed afterwards.
 

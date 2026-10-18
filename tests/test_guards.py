@@ -165,7 +165,7 @@ def test_swapped_numbers_with_unchanged_totals_fail():
     start = p["README_CN.md"].index("<!-- BEGIN GENERATED: comparison -->")
     end = p["README_CN.md"].index("<!-- END GENERATED: comparison -->", start)
     block = p["README_CN.md"][start:end]
-    changed = block.replace("28.0", "__SWAP__", 1).replace("25.49", "28.0", 1).replace("__SWAP__", "25.49", 1)
+    changed = block.replace("24.25", "__SWAP__", 1).replace("15.93", "24.25", 1).replace("__SWAP__", "15.93", 1)
     p["README_CN.md"] = p["README_CN.md"][:start] + changed + p["README_CN.md"][end:]
     assert vd.numbers(p["README.md"]) == vd.numbers(p["README_CN.md"])
     assert vd.check_numbers(p)

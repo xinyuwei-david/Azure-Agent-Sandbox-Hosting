@@ -53,7 +53,7 @@ def test_readme_headline_numbers_come_from_evidence():
     metrics, _ = rd.load_inputs()
     for name in ("README.md", "README_CN.md"):
         text = (rd.ROOT / name).read_text(encoding="utf-8")
-        assert "28.0" in text and "25.49" in text and "14.45" in text
+        assert "1.35" in text and "24.25" in text and "15.93" in text
         for key in re.findall(r"<!--v:([a-z0-9_.]+)-->", text):
             assert key.rpartition(".")[0] in metrics, key
 
@@ -67,32 +67,13 @@ def test_comparison_keeps_the_full_table_and_only_changes_wrapping(lang):
     original = rd.table(header, details) + "\n" + observation + "\n"
     assert rd.unwrap_table_layout(block) == original
     lines = [line for line in block.splitlines() if line.startswith("|")]
-    assert len(lines) == len(details) + 2 == 15
+    assert len(lines) == len(details) + 2 == 8
     assert all(len(line.split("|")[1:-1]) == 6 for line in lines)
+    # The table compares sandbox lifecycle clocks only; answer times stay in VALIDATION.
+    assert not any(("answer" if lang == "en" else "回答") in row[0] for row in details)
     assert "<details" not in block and "<summary" not in block and "#### " not in block
     assert "&shy;" in block and "<br>" in block
     assert vd.numbers(block) == vd.numbers(original)
-
-
-@pytest.mark.parametrize("lang", ("en", "zh"))
-def test_cold_formulas_distinguish_component_sums_from_derived_remainder(lang):
-    metrics, runs = rd.load_inputs()
-    c = rd.Ctx(metrics, runs, lang)
-    row = rd.cold_start_formulas(c)
-    assert len(row) == 6
-    for col in (1, 2, 3, 5):
-        assert re.findall(r"\$(.*?)\$", row[col]) == [
-            r"T_{\mathrm{cold}}", r"= T_{\mathrm{ready}}", r"+ T_{\mathrm{first}}"]
-    assert re.findall(r"\$(.*?)\$", row[4]) == [
-        r"T_{\mathrm{cold}}", r"= T_{\mathrm{pod}}", r"+ T_{\mathrm{other}}"]
-    assert metrics["d.first_after_ready"]["label"] == "DERIVED"
-    for cell in row:
-        assert re.findall(r"\$(.*?)\$", rd.wrap_table_cell(cell)) == re.findall(r"\$(.*?)\$", cell)
-    _, details, _ = rd.comparison_details(c)
-    assert details[0] == row
-    boundary = "not a separately timed Ready → answer interval" if lang == "en" else "不是独立计时的 Ready → 回答"
-    assert boundary.casefold() in row[4].casefold()
-    assert boundary.casefold() in details[3][4].casefold()
 
 
 @pytest.mark.parametrize("cell", [
