@@ -166,8 +166,8 @@
       "state_storage_zh": "不需要（可选）：暂停快照存在宿主 VM 的系统盘上，在第二台主机上恢复不了（`e-2026-10-18-ci-multi`）；沙箱内的历史持续增长 3/3",
       "selectable_compute_en": "Gen2 VM SKUs with nested virtualization, such as `Standard_D4ds_v7` or `Standard_D8ds_v7`; E2B's `code-interpreter-v1` template is 2 vCPU / 2 GiB, and each sandbox takes 2 GiB of the VM's hugepage pool",
       "selectable_compute_zh": "支持嵌套虚拟化的 Gen2 VM SKU，如 `Standard_D4ds_v7` 或 `Standard_D8ds_v7`；E2B 的 `code-interpreter-v1` 模板为 2 vCPU / 2 GiB，每个沙箱占 VM 大页池里的 2 GiB",
-      "boundary_en": "One Firecracker micro-VM per sandbox",
-      "boundary_zh": "每个沙箱一个 Firecracker micro-VM",
+      "boundary_en": "One Firecracker per sandbox",
+      "boundary_zh": "每个沙箱一个 Firecracker",
       "node_owner_en": "You",
       "node_owner_zh": "你"
     }
